@@ -481,3 +481,19 @@ func (e *Engine) SetModulesConfig(jsonStr string) error {
 	return SetModulesConfigJSON(jsonStr)
 }
 
+// ActivateElementPicker enables the visual DOM element picker on intercepted pages for seconds.
+func (e *Engine) ActivateElementPicker(seconds int) {
+	mitm.SetElementPickerActive(seconds)
+}
+
+// IsElementPickerActive checks if visual DOM element picker is currently active.
+func (e *Engine) IsElementPickerActive() bool {
+	return mitm.IsElementPickerActive()
+}
+
+// SetElementRuleListener registers the listener for newly created element rules.
+func (e *Engine) SetElementRuleListener(l ElementRuleListener) {
+	mitm.SetElementRuleListener(l)
+}
+
+

@@ -38,6 +38,7 @@
     <string name="vpn_phase_waiting_network">Waiting for network…</string>
     <string name="vpn_notification_stats_today">%1$d ads blocked today | Uptime %2$s</string>
     <string name="vpn_notification_action_pause">Pause 1h</string>
+    <string name="vpn_notification_action_assistant">Assistant</string>
     <string name="vpn_notification_action_stop">Stop</string>
     <string name="vpn_paused_title">BlockAds paused</string>
     <string name="vpn_paused_text">Ad blocking paused for 1 hour. Will resume automatically.</string>

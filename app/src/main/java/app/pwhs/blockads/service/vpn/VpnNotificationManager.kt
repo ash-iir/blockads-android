@@ -97,6 +97,14 @@ class VpnNotificationManager(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val assistantIntent = Intent(context, app.pwhs.blockads.ui.assistant.AssistantActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val assistantPendingIntent = PendingIntent.getActivity(
+            context, 6, assistantIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val retryIntent = Intent(context, AdBlockVpnService::class.java).apply {
             action = AdBlockVpnService.ACTION_RESTART
         }
@@ -179,7 +187,7 @@ class VpnNotificationManager(private val context: Context) {
                 ).build()
             ).addAction(
                 Notification.Action.Builder(
-                    null, context.getString(R.string.vpn_notification_action_stop), stopPendingIntent
+                    null, context.getString(R.string.vpn_notification_action_assistant), assistantPendingIntent
                 ).build()
             )
         }

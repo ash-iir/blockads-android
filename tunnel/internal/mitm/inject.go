@@ -208,12 +208,19 @@ func (r *injectingReader) Read(p []byte) (int, error) {
 	return r.doInject(p, data, tagEnd, err)
 }
 
+func getInjectionTags() []byte {
+	if IsElementPickerActive() {
+		return []byte(injectionTags + `<script src="https://local.pwhs.app/element_picker.js"></script>`)
+	}
+	return []byte(injectionTags)
+}
+
 // doInject splices the lightweight asset tags into the data buffer right at tagEnd.
 func (r *injectingReader) doInject(p []byte, data []byte, tagEnd int, upstreamErr error) (int, error) {
 	r.injected = true
 	logf("[MITM Inject] Injected cosmetic & scriptlet tags into HTML")
 
-	script := []byte(injectionTags)
+	script := getInjectionTags()
 
 	// Build: [before + tag] + [injected tags] + [rest of data]
 	before := data[:tagEnd]

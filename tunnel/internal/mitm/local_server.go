@@ -74,6 +74,12 @@ func ServeLocalAsset(req *http.Request) *http.Response {
 		return serveScriptlets(req)
 	case strings.HasPrefix(path, "/sl-") && strings.HasSuffix(path, ".js"):
 		return servePerHostScriptlets(req)
+	case path == "/element_picker.js":
+		return serveElementPicker(req)
+	case path == "/api/add-element-rule":
+		return handleAddElementRule(req)
+	case path == "/api/picker-status":
+		return handlePickerStatus(req)
 	case path == "/health":
 		return serveHealth(req)
 	default:

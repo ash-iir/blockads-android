@@ -41,6 +41,25 @@ class GoTunnelAdapter(
 
     init {
         TunnelRuleLoader.loadGeoIPDatabase(context, engine)
+        runCatching {
+            engine.setElementRuleListener(object : tunnel.ElementRuleListener {
+                override fun onElementRuleAdded(domain: String, selector: String) {
+                    scope.launch(Dispatchers.IO) {
+                        runCatching {
+                            val dao: app.pwhs.blockads.data.dao.ElementRuleDao =
+                                org.koin.core.context.GlobalContext.get().get()
+                            dao.insert(
+                                app.pwhs.blockads.data.entities.ElementRule(
+                                    domain = domain,
+                                    cssSelector = selector
+                                )
+                            )
+                            Timber.d("New cosmetic element rule inserted: $domain -> $selector")
+                        }.onFailure { Timber.e(it, "Failed to save picked element rule") }
+                    }
+                }
+            })
+        }
     }
 
     /**
@@ -439,6 +458,13 @@ class GoTunnelAdapter(
     fun lookupIP(domain: String): ByteArray? = runCatching {
         engine.resolveIP(domain)
     }.getOrNull()
+
+    fun activateElementPicker(durationSeconds: Long = 90L) {
+        runCatching { engine.activateElementPicker(durationSeconds) }
+    }
+
+    fun isElementPickerActive(): Boolean =
+        runCatching { engine.isElementPickerActive }.getOrDefault(false)
 
     fun updateTries() {
         engine.setTries(filterRepo.getAdTriePath(), filterRepo.getSecurityTriePath(), filterRepo.getAdBloomPath(), filterRepo.getSecurityBloomPath())

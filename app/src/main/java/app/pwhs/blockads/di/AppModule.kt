@@ -326,5 +326,12 @@ val appModule = module {
             application = androidApplication()
         )
     }
+    viewModel {
+        app.pwhs.blockads.ui.assistant.AssistantViewModel(
+            application = androidApplication(),
+            dnsLogDao = get(),
+            appPrefs = get()
+        )
+    }
 }
 

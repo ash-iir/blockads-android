@@ -58,7 +58,10 @@ type DomainChecker interface
 	method DomainChecker.GetBlockReason(domain string) string
 	method DomainChecker.HasCustomRule(domain string) int
 	method DomainChecker.IsBlocked(domain string) bool
+type ElementRuleListener = internal/mitm.ElementRuleListener
+	method ElementRuleListener.OnElementRuleAdded(domain string, selector string)
 type Engine struct
+	method Engine.ActivateElementPicker(seconds int)
 	method Engine.AppendRemoteFilterRules(tag string, content string) (int, error)
 	method Engine.ClearQuanXConfig()
 	method Engine.ClearRulesetConfig()
@@ -80,6 +83,7 @@ type Engine struct
 	method Engine.IsConnLogEnabled() bool
 	method Engine.IsDoHBlockingEnabled() bool
 	method Engine.IsDomainBlocked(host string) bool
+	method Engine.IsElementPickerActive() bool
 	method Engine.IsMitmActive() bool
 	method Engine.IsRunning() bool
 	method Engine.IsTailscaleActive() bool
@@ -105,6 +109,7 @@ type Engine struct
 	method Engine.SetDoHBlocklist(content string)
 	method Engine.SetDoHBlocklistFromFd(fd int, offset int64, length int64) error
 	method Engine.SetDomainChecker(checker DomainChecker)
+	method Engine.SetElementRuleListener(l ElementRuleListener)
 	method Engine.SetExtraPassthroughSuffixes(content string)
 	method Engine.SetExtraPassthroughSuffixesFromFd(fd int, offset int64, length int64) error
 	method Engine.SetFilterHttp3(enabled bool)
