@@ -75,6 +75,12 @@ type SocketProtector interface {
 	Protect(fd int) bool
 }
 
+// ElementRuleListener is notified whenever the user blocks an element via the picker.
+// gomobile will generate the corresponding Java/Kotlin interface.
+type ElementRuleListener interface {
+	OnElementRuleAdded(domain string, selector string)
+}
+
 // Engine is the main DNS tunnel engine.
 // All exported methods use gomobile-compatible types.
 type Engine struct {

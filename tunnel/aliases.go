@@ -38,7 +38,6 @@ type GeoIPDatabase = geoip.Database
 
 type CertManager = mitm.CertManager
 type MitmFilter = mitm.MitmFilter
-type ElementRuleListener = mitm.ElementRuleListener
 
 type WgConfig = wireguard.WgConfig
 type WgInterface = wireguard.WgInterface

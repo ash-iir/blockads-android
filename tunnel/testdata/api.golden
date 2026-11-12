@@ -58,7 +58,7 @@ type DomainChecker interface
 	method DomainChecker.GetBlockReason(domain string) string
 	method DomainChecker.HasCustomRule(domain string) int
 	method DomainChecker.IsBlocked(domain string) bool
-type ElementRuleListener = internal/mitm.ElementRuleListener
+type ElementRuleListener interface
 	method ElementRuleListener.OnElementRuleAdded(domain string, selector string)
 type Engine struct
 	method Engine.ActivateElementPicker(seconds int)

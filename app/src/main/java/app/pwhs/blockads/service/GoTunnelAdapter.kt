@@ -41,11 +41,11 @@ class GoTunnelAdapter(
 
     init {
         TunnelRuleLoader.loadGeoIPDatabase(context, engine)
-        runCatching {
+        try {
             engine.setElementRuleListener(object : tunnel.ElementRuleListener {
                 override fun onElementRuleAdded(domain: String, selector: String) {
                     scope.launch(Dispatchers.IO) {
-                        runCatching {
+                        try {
                             val dao: app.pwhs.blockads.data.dao.ElementRuleDao =
                                 org.koin.core.context.GlobalContext.get().get()
                             dao.insert(
@@ -55,10 +55,14 @@ class GoTunnelAdapter(
                                 )
                             )
                             Timber.d("New cosmetic element rule inserted: $domain -> $selector")
-                        }.onFailure { Timber.e(it, "Failed to save picked element rule") }
+                        } catch (e: Exception) {
+                            Timber.e(e, "Failed to save picked element rule")
+                        }
                     }
                 }
             })
+        } catch (t: Throwable) {
+            Timber.e(t, "Failed to register ElementRuleListener")
         }
     }
 
