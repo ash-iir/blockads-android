@@ -238,8 +238,11 @@ object IptablesManager {
                 add("ip6tables -t filter -A $CHAIN_FILTER -m owner --uid-owner $wUid -j RETURN")
             }
             add("ip6tables -t filter -A $CHAIN_FILTER -p tcp --dport 853 -j REJECT --reject-with tcp-reset")
-            add("ip6tables -t filter -A $CHAIN_FILTER -p udp --dport 53 -j REJECT --reject-with icmp6-port-unreachable")
-            add("ip6tables -t filter -A $CHAIN_FILTER -p tcp --dport 53 -j REJECT --reject-with tcp-reset")
+            // Only block plain IPv6 DNS when the v6 nat redirect is in place. Kernels
+            // without ip6tables nat (many Android devices) cannot redirect it, so a
+            // REJECT here would kill the carrier's resolver and break DNS entirely.
+            add("if ip6tables -t nat -S $CHAIN 2>/dev/null | grep -q 'dport 53'; then ip6tables -t filter -A $CHAIN_FILTER -p udp --dport 53 -j REJECT --reject-with icmp6-port-unreachable; fi")
+            add("if ip6tables -t nat -S $CHAIN 2>/dev/null | grep -q 'dport 53'; then ip6tables -t filter -A $CHAIN_FILTER -p tcp --dport 53 -j REJECT --reject-with tcp-reset; fi")
             add("ip6tables -t filter -A OUTPUT -j $CHAIN_FILTER")
         }
 
