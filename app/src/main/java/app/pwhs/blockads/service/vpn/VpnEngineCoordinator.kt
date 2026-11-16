@@ -101,8 +101,7 @@ class VpnEngineCoordinator(
 
             val firewallEnabled = d9.await()
             val fwManager = if (firewallEnabled) {
-                FirewallManager(context, firewallRuleDao).also {
-                    it.loadRules()
+                FirewallManager.create(context, firewallRuleDao, appPrefs).also {
                     Timber.d("Firewall enabled, rules loaded")
                 }
             } else {
@@ -163,9 +162,9 @@ class VpnEngineCoordinator(
 
     suspend fun isTrustedNetworkWithSystemDns(): Boolean {
         if (!appPrefs.getUseSystemDnsOnTrustedEnabledSnapshot()) return false
-        val ssid = TrustedNetworkManager.currentSsid(context) ?: return false
+        val wifiInfo = TrustedNetworkManager.currentWifiInfo(context) ?: return false
         val trusted = appPrefs.getTrustedSsidsSnapshot()
-        return ssid in trusted
+        return TrustedNetworkManager.isTrusted(trusted, wifiInfo.first, wifiInfo.second)
     }
 
     suspend fun reloadDns(goTunnelAdapter: GoTunnelAdapter) {
@@ -241,6 +240,15 @@ class VpnEngineCoordinator(
         val filterHttp3 = httpsFilteringEnabled && appPrefs.getFilterHttp3Snapshot()
         val blockDohBypass = appPrefs.getBlockDohBypassSnapshot()
         val blockWebRtc = appPrefs.getBlockWebRtcLeakSnapshot()
+        val sniProxyRules = app.pwhs.blockads.data.model.SniProxyRuleCodec.fromJsonList(
+            appPrefs.getSniProxyRulesJsonSnapshot()
+        )
+        goTunnelAdapter.setSniProxyRules(
+            app.pwhs.blockads.data.model.SniProxyRuleCodec.toEngineJson(
+                sniProxyRules,
+                context.packageManager
+            )
+        )
 
         if (appPrefs.tailscale.isEnabledSnapshot()) {
             val tdCache = java.io.File(context.cacheDir, "taildrop").apply { mkdirs() }
@@ -258,6 +266,10 @@ class VpnEngineCoordinator(
             if (exitNodeId != 0L) {
                 goTunnelAdapter.setTailscaleExitNode(exitNodeId)
             }
+            if (appPrefs.tailscale.getAdvertiseExitNodeSnapshot()) {
+                goTunnelAdapter.setTailscaleAdvertiseExitNode(true)
+            }
+            goTunnelAdapter.setTailscaleAdBlockEnabled(appPrefs.tailscale.getAdblockEnabledSnapshot())
         }
 
         goTunnelAdapter.start(

@@ -41,6 +41,9 @@ data class LogsKey(
 data class FilterDetailKey(val filterId: Long) : NavKey
 
 @Serializable
+data object FilterOverlapKey : NavKey
+
+@Serializable
 data object AboutKey : NavKey
 
 @Serializable
@@ -50,7 +53,13 @@ data object AppManagementKey : NavKey
 data object TrustedNetworksKey : NavKey
 
 @Serializable
-data object AppearanceKey : NavKey
+data object AppearanceThemeKey : NavKey
+
+@Serializable
+data object AppearanceNavigationKey : NavKey
+
+@Serializable
+data object AppearanceLanguageKey : NavKey
 
 @Serializable
 data object DomainRulesKey : NavKey

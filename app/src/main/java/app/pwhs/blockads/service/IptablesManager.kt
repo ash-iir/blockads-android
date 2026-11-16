@@ -24,6 +24,7 @@ object IptablesManager {
     private const val CHAIN_FILTER = "BLOCKADS_DOT"
     private const val CHAIN_HTTP = "BLOCKADS_HTTP"
     private const val CHAIN_HTTP_V6 = "BLOCKADS_HTTP6"
+    private const val CHAIN_QUIC = "BLOCKADS_QUIC"
     private const val LOCAL_DNS_PORT = 15353
     private const val LOCAL_HTTP_PORT = 15354
 
@@ -187,10 +188,19 @@ object IptablesManager {
             for (bUid in browserUids) {
                 add("iptables -t nat -A $CHAIN_HTTP -m owner --uid-owner $bUid -p tcp --dport 80 -j REDIRECT --to-ports $LOCAL_HTTP_PORT")
                 add("iptables -t nat -A $CHAIN_HTTP -m owner --uid-owner $bUid -p tcp --dport 443 -j REDIRECT --to-ports $LOCAL_HTTP_PORT")
-                // Reject QUIC (UDP 443) for browsers to force fallback to TCP TLS where transparent proxy can filter
-                add("iptables -t filter -A OUTPUT -m owner --uid-owner $bUid -p udp --dport 443 -j REJECT")
             }
             add("iptables -t nat -A OUTPUT -j $CHAIN_HTTP")
+            // Reject QUIC (UDP 443) in its own chain so teardown can flush every copy;
+            // rules added straight to OUTPUT survived teardown and stacked up per start.
+            add("iptables -t filter -N $CHAIN_QUIC 2>/dev/null || true")
+            add("iptables -t filter -A $CHAIN_QUIC -m owner --uid-owner $uid -j RETURN")
+            for (wUid in whitelistUids) {
+                add("iptables -t filter -A $CHAIN_QUIC -m owner --uid-owner $wUid -j RETURN")
+            }
+            for (bUid in browserUids) {
+                add("iptables -t filter -A $CHAIN_QUIC -m owner --uid-owner $bUid -p udp --dport 443 -j REJECT")
+            }
+            add("iptables -t filter -A OUTPUT -j $CHAIN_QUIC")
         }
 
         if (blockDoT) {
@@ -213,13 +223,13 @@ object IptablesManager {
         browserUids: Collection<Int> = emptyList()
     ): List<String> = buildList {
         add("ip6tables -t nat -N $CHAIN 2>/dev/null || true")
-        add("ip6tables -t nat -A $CHAIN -m owner --uid-owner $uid -j RETURN 2>/dev/null || true")
+        add("ip6tables -t nat -A $CHAIN -m owner --uid-owner $uid -j RETURN")
         for (wUid in whitelistUids) {
-            add("ip6tables -t nat -A $CHAIN -m owner --uid-owner $wUid -j RETURN 2>/dev/null || true")
+            add("ip6tables -t nat -A $CHAIN -m owner --uid-owner $wUid -j RETURN")
         }
-        add("ip6tables -t nat -A $CHAIN -p udp --dport 53 -j REDIRECT --to-ports $LOCAL_DNS_PORT 2>/dev/null || true")
-        add("ip6tables -t nat -A $CHAIN -p tcp --dport 53 -j REDIRECT --to-ports $LOCAL_DNS_PORT 2>/dev/null || true")
-        add("ip6tables -t nat -A OUTPUT -j $CHAIN 2>/dev/null || true")
+        add("ip6tables -t nat -A $CHAIN -p udp --dport 53 -j REDIRECT --to-ports $LOCAL_DNS_PORT")
+        add("ip6tables -t nat -A $CHAIN -p tcp --dport 53 -j REDIRECT --to-ports $LOCAL_DNS_PORT")
+        add("ip6tables -t nat -A OUTPUT -j $CHAIN")
 
         if (blockDoT) {
             add("ip6tables -t filter -N $CHAIN_FILTER 2>/dev/null || true")
@@ -228,8 +238,11 @@ object IptablesManager {
                 add("ip6tables -t filter -A $CHAIN_FILTER -m owner --uid-owner $wUid -j RETURN")
             }
             add("ip6tables -t filter -A $CHAIN_FILTER -p tcp --dport 853 -j REJECT --reject-with tcp-reset")
-            add("ip6tables -t filter -A $CHAIN_FILTER -p udp --dport 53 -j REJECT --reject-with icmp6-port-unreachable")
-            add("ip6tables -t filter -A $CHAIN_FILTER -p tcp --dport 53 -j REJECT --reject-with tcp-reset")
+            // Only block plain IPv6 DNS when the v6 nat redirect is in place. Kernels
+            // without ip6tables nat (many Android devices) cannot redirect it, so a
+            // REJECT here would kill the carrier's resolver and break DNS entirely.
+            add("if ip6tables -t nat -S $CHAIN 2>/dev/null | grep -q 'dport 53'; then ip6tables -t filter -A $CHAIN_FILTER -p udp --dport 53 -j REJECT --reject-with icmp6-port-unreachable; fi")
+            add("if ip6tables -t nat -S $CHAIN 2>/dev/null | grep -q 'dport 53'; then ip6tables -t filter -A $CHAIN_FILTER -p tcp --dport 53 -j REJECT --reject-with tcp-reset; fi")
             add("ip6tables -t filter -A OUTPUT -j $CHAIN_FILTER")
         }
 
@@ -256,7 +269,13 @@ object IptablesManager {
         "iptables -t nat -D OUTPUT -j $CHAIN_HTTP 2>/dev/null",
         "iptables -t nat -F $CHAIN_HTTP 2>/dev/null",
         "iptables -t nat -X $CHAIN_HTTP 2>/dev/null",
+        "iptables -t filter -D OUTPUT -j $CHAIN_QUIC 2>/dev/null",
+        "iptables -t filter -F $CHAIN_QUIC 2>/dev/null",
+        "iptables -t filter -X $CHAIN_QUIC 2>/dev/null",
         "iptables -t filter -D OUTPUT -p udp --dport 443 -j REJECT 2>/dev/null",
+        // Older builds appended owner-matched QUIC rejects straight to OUTPUT; delete
+        // every copy by line number, otherwise they keep DNS/TCP filtering alive.
+        "while n=\$(iptables -t filter -L OUTPUT --line-numbers -n 2>/dev/null | awk '/udp dpt:443/ && /REJECT/ && /owner/ {print \$1; exit}'); [ -n \"\$n\" ]; do iptables -t filter -D OUTPUT \"\$n\" 2>/dev/null || break; done",
         // IPv4 filter chain (DoT blocking)
         "iptables -t filter -D OUTPUT -j $CHAIN_FILTER 2>/dev/null",
         "iptables -t filter -F $CHAIN_FILTER 2>/dev/null",

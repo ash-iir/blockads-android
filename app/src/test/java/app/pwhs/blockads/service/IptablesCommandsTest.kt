@@ -38,6 +38,51 @@ class IptablesCommandsTest {
     }
 
     @Test
+    fun `ipv6 dns block only applies when the v6 nat redirect exists`() {
+        val cmds = IptablesManager.buildIpv6Commands(10123, blockDoT = true, whitelistUids = emptyList())
+
+        assertFalse(
+            "plain IPv6 DNS must not be rejected unconditionally: $cmds",
+            cmds.any {
+                it.startsWith("ip6tables -t filter -A BLOCKADS_DOT -p udp --dport 53") ||
+                    it.startsWith("ip6tables -t filter -A BLOCKADS_DOT -p tcp --dport 53")
+            }
+        )
+        assertTrue(
+            "IPv6 DNS rejects must be guarded by the nat redirect check: $cmds",
+            cmds.any { it.contains("ip6tables -t nat -S BLOCKADS_DNS") && it.contains("--dport 53 -j REJECT") }
+        )
+    }
+
+    @Test
+    fun `https filtering keeps quic rejects in a chain that teardown can flush`() {
+        val cmds = IptablesManager.buildIpv4Commands(
+            uid = 10123,
+            blockDoT = false,
+            whitelistUids = listOf(10200),
+            httpsFiltering = true,
+            browserUids = listOf(10300),
+        )
+
+        assertTrue(
+            "QUIC reject must live in BLOCKADS_QUIC: $cmds",
+            cmds.contains("iptables -t filter -A BLOCKADS_QUIC -m owner --uid-owner 10300 -p udp --dport 443 -j REJECT")
+        )
+        assertTrue(
+            "OUTPUT must jump into BLOCKADS_QUIC: $cmds",
+            cmds.contains("iptables -t filter -A OUTPUT -j BLOCKADS_QUIC")
+        )
+        assertFalse(
+            "QUIC rejects must not be appended straight to OUTPUT: $cmds",
+            cmds.any { it.startsWith("iptables -t filter -A OUTPUT -m owner") }
+        )
+        assertTrue(
+            "teardown must flush BLOCKADS_QUIC",
+            IptablesManager.teardownCommands().contains("iptables -t filter -F BLOCKADS_QUIC 2>/dev/null")
+        )
+    }
+
+    @Test
     fun `teardown removes every chain it created`() {
         val cmds = IptablesManager.teardownCommands()
         for (bin in listOf("iptables", "ip6tables")) {

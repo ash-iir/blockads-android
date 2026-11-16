@@ -6,16 +6,19 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -64,6 +67,7 @@ fun HttpsFilteringScreen(
     onNavigateBack: () -> Unit,
     onNavigateToWizard: () -> Unit = {},
     modifier: Modifier = Modifier,
+    showBackButton: Boolean = true,
     viewModel: HttpsFilteringViewModel = koinViewModel()
 ) {
     val isEnabled by viewModel.isEnabled.collectAsStateWithLifecycle()
@@ -155,15 +159,19 @@ fun HttpsFilteringScreen(
 
     Scaffold(
         modifier = modifier,
+        contentWindowInsets = if (showBackButton) androidx.compose.material3.ScaffoldDefaults.contentWindowInsets else WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.https_filtering_title)) },
+                windowInsets = if (showBackButton) TopAppBarDefaults.windowInsets else WindowInsets(0, 0, 0, 0),
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.accessibility_navigate_back)
-                        )
+                    if (showBackButton) {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.accessibility_navigate_back)
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -187,13 +195,19 @@ fun HttpsFilteringScreen(
             val isCertInstalled = certStatus == CertStatus.INSTALLED
             val isCheckingCert = certStatus == CertStatus.CHECKING
 
-            LazyColumn(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                contentAlignment = Alignment.TopCenter
             ) {
+                LazyColumn(
+                    modifier = Modifier
+                        .widthIn(max = 720.dp)
+                        .fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
                 // ── Master Toggle + Status ─────────────────────────────
                 item {
                     MasterToggleCard(
@@ -323,6 +337,7 @@ fun HttpsFilteringScreen(
 
                 // Bottom spacer
                 item { Spacer(modifier = Modifier.height(32.dp)) }
+                }
             }
         }
     }
