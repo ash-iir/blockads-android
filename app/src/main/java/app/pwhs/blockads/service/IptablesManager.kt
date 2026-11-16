@@ -213,13 +213,13 @@ object IptablesManager {
         browserUids: Collection<Int> = emptyList()
     ): List<String> = buildList {
         add("ip6tables -t nat -N $CHAIN 2>/dev/null || true")
-        add("ip6tables -t nat -A $CHAIN -m owner --uid-owner $uid -j RETURN 2>/dev/null || true")
+        add("ip6tables -t nat -A $CHAIN -m owner --uid-owner $uid -j RETURN")
         for (wUid in whitelistUids) {
-            add("ip6tables -t nat -A $CHAIN -m owner --uid-owner $wUid -j RETURN 2>/dev/null || true")
+            add("ip6tables -t nat -A $CHAIN -m owner --uid-owner $wUid -j RETURN")
         }
-        add("ip6tables -t nat -A $CHAIN -p udp --dport 53 -j REDIRECT --to-ports $LOCAL_DNS_PORT 2>/dev/null || true")
-        add("ip6tables -t nat -A $CHAIN -p tcp --dport 53 -j REDIRECT --to-ports $LOCAL_DNS_PORT 2>/dev/null || true")
-        add("ip6tables -t nat -A OUTPUT -j $CHAIN 2>/dev/null || true")
+        add("ip6tables -t nat -A $CHAIN -p udp --dport 53 -j REDIRECT --to-ports $LOCAL_DNS_PORT")
+        add("ip6tables -t nat -A $CHAIN -p tcp --dport 53 -j REDIRECT --to-ports $LOCAL_DNS_PORT")
+        add("ip6tables -t nat -A OUTPUT -j $CHAIN")
 
         if (blockDoT) {
             add("ip6tables -t filter -N $CHAIN_FILTER 2>/dev/null || true")
