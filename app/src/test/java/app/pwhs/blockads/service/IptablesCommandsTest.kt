@@ -38,6 +38,34 @@ class IptablesCommandsTest {
     }
 
     @Test
+    fun `https filtering keeps quic rejects in a chain that teardown can flush`() {
+        val cmds = IptablesManager.buildIpv4Commands(
+            uid = 10123,
+            blockDoT = false,
+            whitelistUids = listOf(10200),
+            httpsFiltering = true,
+            browserUids = listOf(10300),
+        )
+
+        assertTrue(
+            "QUIC reject must live in BLOCKADS_QUIC: $cmds",
+            cmds.contains("iptables -t filter -A BLOCKADS_QUIC -m owner --uid-owner 10300 -p udp --dport 443 -j REJECT")
+        )
+        assertTrue(
+            "OUTPUT must jump into BLOCKADS_QUIC: $cmds",
+            cmds.contains("iptables -t filter -A OUTPUT -j BLOCKADS_QUIC")
+        )
+        assertFalse(
+            "QUIC rejects must not be appended straight to OUTPUT: $cmds",
+            cmds.any { it.startsWith("iptables -t filter -A OUTPUT -m owner") }
+        )
+        assertTrue(
+            "teardown must flush BLOCKADS_QUIC",
+            IptablesManager.teardownCommands().contains("iptables -t filter -F BLOCKADS_QUIC 2>/dev/null")
+        )
+    }
+
+    @Test
     fun `teardown removes every chain it created`() {
         val cmds = IptablesManager.teardownCommands()
         for (bin in listOf("iptables", "ip6tables")) {
