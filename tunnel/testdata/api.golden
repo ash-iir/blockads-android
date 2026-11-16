@@ -92,6 +92,7 @@ type Engine struct
 	method Engine.QuanXRuleCount() int
 	method Engine.ResolveIP(host string) ([]byte, error)
 	method Engine.RulesetRuleCount() int
+	method Engine.SendTailscaleFile(target string, fileName string, filePath string) error
 	method Engine.ServeDNS(w github.com/miekg/dns.ResponseWriter, r *github.com/miekg/dns.Msg)
 	method Engine.SetAdPathPatterns(patternsCsv string)
 	method Engine.SetAppResolver(resolver AppResolver)
@@ -109,6 +110,7 @@ type Engine struct
 	method Engine.SetExtraPassthroughSuffixesFromFd(fd int, offset int64, length int64) error
 	method Engine.SetFilterHttp3(enabled bool)
 	method Engine.SetFirewallChecker(checker FirewallChecker)
+	method Engine.SetFirewallEnabled(enabled bool)
 	method Engine.SetGeoIPDatabaseBytes(data []byte) error
 	method Engine.SetGeoIPDatabaseFromFd(fd int, offset int64, length int64) error
 	method Engine.SetLogCallback(cb LogCallback)
@@ -126,7 +128,10 @@ type Engine struct
 	method Engine.SetScriptletRulesFromFile(filePath string) error
 	method Engine.SetScriptletsRuntime(js string)
 	method Engine.SetShadowsocksConfig(configJSON string) error
+	method Engine.SetSniProxyRules(rulesJSON string)
 	method Engine.SetSplitDNSZones(zones string)
+	method Engine.SetTailscaleAdBlockEnabled(enabled bool)
+	method Engine.SetTailscaleAdvertiseExitNode(enabled bool)
 	method Engine.SetTailscaleExitNode(nodeID int64)
 	method Engine.SetTailscaleTaildropDir(dir string)
 	method Engine.SetTailscaleTaildropReceiver(receiver TaildropReceiver)
@@ -240,6 +245,7 @@ type Resolver = internal/dns.Resolver
 	method Resolver.Resolve(rawQuery []byte) ([]byte, error)
 	method Resolver.ResolveARecord(domain string, dnsServer string) (net.IP, error)
 	method Resolver.SetODoHRelay(relayURL string)
+	method Resolver.SetProxyDialer(fn internal/dns.ProxyDialFunc)
 	method Resolver.SetSplitDNS(dnsServer string, zones []string)
 	method Resolver.Shutdown()
 	method Resolver.SplitDNS() string

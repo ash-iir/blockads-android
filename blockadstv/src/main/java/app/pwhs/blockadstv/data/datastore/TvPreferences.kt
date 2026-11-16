@@ -40,6 +40,7 @@ class TvPreferences(private val context: Context) {
         private val KEY_PROXY_PROFILES_JSON = stringPreferencesKey("proxy_profiles_json")
         private val KEY_ACTIVE_PROXY_PROFILE_ID = stringPreferencesKey("active_proxy_profile_id")
         private val KEY_SUBSCRIPTIONS_JSON = stringPreferencesKey("proxy_subscriptions_json")
+        private val KEY_SNI_PROXY_RULES = stringPreferencesKey("sni_proxy_rules")
 
         const val ROUTING_MODE_DIRECT = "direct"
         const val ROUTING_MODE_PROXY_VPN = "proxy_vpn"
@@ -76,6 +77,7 @@ class TvPreferences(private val context: Context) {
         const val LANGUAGE_RU = "ru"
         const val LANGUAGE_TH = "th"
         const val LANGUAGE_TR = "tr"
+        const val LANGUAGE_HU = "hu"
         const val LANGUAGE_UK = "uk"
         const val LANGUAGE_ZH = "zh"
     }
@@ -352,6 +354,18 @@ class TvPreferences(private val context: Context) {
                     prefs.remove(KEY_ACTIVE_PROXY_PROFILE_ID)
                 }
             }
+        }
+    }
+
+    val sniProxyRulesJson: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_SNI_PROXY_RULES] ?: ""
+    }
+
+    suspend fun getSniProxyRulesJsonSnapshot(): String = sniProxyRulesJson.first()
+
+    suspend fun setSniProxyRulesJson(json: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_SNI_PROXY_RULES] = json
         }
     }
 }

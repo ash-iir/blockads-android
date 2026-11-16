@@ -72,6 +72,7 @@ class LogViewModelTest {
             sinceArgs += secondArg<Long>(); since(secondArg<Long>()).map { rows -> rows.filter { it.blockedBy == firstArg() } }
         }
         every { getDistinctAppNames() } returns flowOf(listOf("Chrome"))
+        every { getDistinctAppPackages() } returns flowOf(emptyList())
     }
     private val filterListDao: FilterListDao = mockk(relaxed = true) {
         every { getAll() } returns flowOf(listOf(FilterList(id = 7, name = "EasyList", url = "u")))
@@ -82,6 +83,7 @@ class LogViewModelTest {
     private val recordLogs = MutableStateFlow(true)
     private val appPrefs: AppPreferences = mockk(relaxed = true) {
         every { recordDnsLogs } returns recordLogs
+        every { logRetentionDays } returns flowOf(0)
     }
 
     private val vm by lazy { LogViewModel(dnsLogDao, filterListDao, whitelistDao, ruleDao, repo, appPrefs, app) { now } }
@@ -203,10 +205,11 @@ class LogViewModelTest {
 
     @Test
     fun `whitelisting lowercases, reloads and refuses duplicates`() = runTest {
-        vm.events.test {
+        vm.undoEvents.test {
             vm.addToWhitelist("  Ads.Example ")
-            assertEquals(UiEvent.ToastRes(R.string.log_whitelisted, listOf(": ads.example")), awaitItem())
-
+            assertEquals(LogUndoEvent.Whitelisted("ads.example"), awaitItem())
+        }
+        vm.events.test {
             vm.addToWhitelist("ADS.example")
             assertEquals(UiEvent.ToastRes(R.string.log_already_whitelisted), awaitItem())
         }
@@ -216,9 +219,9 @@ class LogViewModelTest {
 
     @Test
     fun `blocking from the log adds one lowercased block rule`() = runTest {
-        vm.events.test {
+        vm.undoEvents.test {
             vm.addToCustomBlockRules(" Ads.Example ")
-            assertEquals(UiEvent.ToastRes(R.string.rule_added), awaitItem())
+            assertEquals(LogUndoEvent.Blocked("ads.example"), awaitItem())
         }
         assertEquals(listOf("||ads.example^" to RuleType.BLOCK), ruleDao.rules.value.map { it.rule to it.ruleType })
         coVerify(exactly = 1) { repo.loadCustomRules() }

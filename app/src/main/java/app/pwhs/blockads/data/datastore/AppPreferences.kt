@@ -63,6 +63,10 @@ class AppPreferences internal constructor(
         const val BOTTOM_NAV_TAB_FILTER = AppearancePreferences.BOTTOM_NAV_TAB_FILTER
         const val BOTTOM_NAV_TAB_VPN = AppearancePreferences.BOTTOM_NAV_TAB_VPN
 
+        const val NAV_POSITION_LEFT = AppearancePreferences.NAV_POSITION_LEFT
+        const val NAV_POSITION_RIGHT = AppearancePreferences.NAV_POSITION_RIGHT
+        const val NAV_POSITION_BOTTOM = AppearancePreferences.NAV_POSITION_BOTTOM
+
         const val THEME_SYSTEM = AppearancePreferences.THEME_SYSTEM
         const val THEME_DARK = AppearancePreferences.THEME_DARK
         const val THEME_LIGHT = AppearancePreferences.THEME_LIGHT
@@ -89,6 +93,7 @@ class AppPreferences internal constructor(
         const val LANGUAGE_IT = AppearancePreferences.LANGUAGE_IT
         const val LANGUAGE_AR = AppearancePreferences.LANGUAGE_AR
         const val LANGUAGE_TR = AppearancePreferences.LANGUAGE_TR
+        const val LANGUAGE_HU = AppearancePreferences.LANGUAGE_HU
         const val LANGUAGE_PL = AppearancePreferences.LANGUAGE_PL
         const val LANGUAGE_IN = AppearancePreferences.LANGUAGE_IN
         const val LANGUAGE_PT_BR = AppearancePreferences.LANGUAGE_PT_BR
@@ -128,11 +133,17 @@ class AppPreferences internal constructor(
     val whitelistedApps: Flow<Set<String>> get() = vpnSecurity.whitelistedApps
     val dailySummaryEnabled: Flow<Boolean> get() = vpnSecurity.dailySummaryEnabled
     val milestoneNotificationsEnabled: Flow<Boolean> get() = vpnSecurity.milestoneNotificationsEnabled
+    val homeTipsEnabled: Flow<Boolean> get() = vpnSecurity.homeTipsEnabled
+    val sniProxyRulesJson: Flow<String> get() = vpnSecurity.sniProxyRulesJson
+    suspend fun getSniProxyRulesJsonSnapshot(): String = vpnSecurity.getSniProxyRulesJsonSnapshot()
+    suspend fun setSniProxyRulesJson(json: String) = vpnSecurity.setSniProxyRulesJson(json)
     val lastMilestoneBlocked: Flow<Long> get() = vpnSecurity.lastMilestoneBlocked
     val lastSeenMilestoneDialog: Flow<Long> get() = vpnSecurity.lastSeenMilestoneDialog
     val activeProfileId: Flow<Long> get() = vpnSecurity.activeProfileId
     val recordDnsLogs: Flow<Boolean> get() = vpnSecurity.recordDnsLogs
+    val logRetentionDays: Flow<Int> get() = vpnSecurity.logRetentionDays
     val firewallEnabled: Flow<Boolean> get() = vpnSecurity.firewallEnabled
+    val firewallPromptEnabled: Flow<Boolean> get() = vpnSecurity.firewallPromptEnabled
     val crashReportingEnabled: Flow<Boolean> get() = vpnSecurity.crashReportingEnabled
     val hideFromRecents: Flow<Boolean> get() = vpnSecurity.hideFromRecents
     val trustedSsids: Flow<Set<String>> get() = vpnSecurity.trustedSsids
@@ -169,6 +180,10 @@ class AppPreferences internal constructor(
     val showBottomNavLabels: Flow<Boolean> get() = appearance.showBottomNavLabels
     val bottomNavSecondaryTab: Flow<String> get() = appearance.bottomNavSecondaryTab
     suspend fun setBottomNavSecondaryTab(tab: String) = appearance.setBottomNavSecondaryTab(tab)
+    val navRailPosition: Flow<String> get() = appearance.navRailPosition
+    suspend fun setNavRailPosition(position: String) = appearance.setNavRailPosition(position)
+    val floatingCapsuleNav: Flow<Boolean> get() = appearance.floatingCapsuleNav
+    suspend fun setFloatingCapsuleNav(enabled: Boolean) = appearance.setFloatingCapsuleNav(enabled)
 
     // ── Filter Flows ─────────────────────────────────────────────────────
     val filterUrl: Flow<String> get() = filter.filterUrl
@@ -209,11 +224,14 @@ class AppPreferences internal constructor(
     suspend fun getWhitelistedAppsSnapshot(): Set<String> = vpnSecurity.getWhitelistedAppsSnapshot()
     suspend fun setDailySummaryEnabled(enabled: Boolean) = vpnSecurity.setDailySummaryEnabled(enabled)
     suspend fun setMilestoneNotificationsEnabled(enabled: Boolean) = vpnSecurity.setMilestoneNotificationsEnabled(enabled)
+    suspend fun setHomeTipsEnabled(enabled: Boolean) = vpnSecurity.setHomeTipsEnabled(enabled)
     suspend fun setLastMilestoneBlocked(count: Long) = vpnSecurity.setLastMilestoneBlocked(count)
     suspend fun setLastSeenMilestoneDialog(milestone: Long) = vpnSecurity.setLastSeenMilestoneDialog(milestone)
     suspend fun setActiveProfileId(id: Long) = vpnSecurity.setActiveProfileId(id)
     suspend fun setRecordDnsLogs(enabled: Boolean) = vpnSecurity.setRecordDnsLogs(enabled)
+    suspend fun setLogRetentionDays(days: Int) = vpnSecurity.setLogRetentionDays(days)
     suspend fun setFirewallEnabled(enabled: Boolean) = vpnSecurity.setFirewallEnabled(enabled)
+    suspend fun setFirewallPromptEnabled(enabled: Boolean) = vpnSecurity.setFirewallPromptEnabled(enabled)
     suspend fun setHttpsFilteringEnabled(enabled: Boolean) = vpnSecurity.setHttpsFilteringEnabled(enabled)
     suspend fun getHttpsFilteringEnabledSnapshot(): Boolean = vpnSecurity.getHttpsFilteringEnabledSnapshot()
     suspend fun setFilterHttp3(enabled: Boolean) = vpnSecurity.setFilterHttp3(enabled)

@@ -3,6 +3,7 @@ package app.pwhs.blockads.ui.home
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,6 +63,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.pwhs.blockads.R
 import app.pwhs.blockads.data.datastore.AppPreferences
 import app.pwhs.blockads.data.repository.FilterListRepository
+import app.pwhs.blockads.ui.component.LocalFloatingBottomBarPadding
+import app.pwhs.blockads.ui.component.rememberIsExpandedLayout
 import app.pwhs.blockads.ui.home.data.RecentLogFilter
 import app.pwhs.blockads.ui.theme.AccentBlue
 import app.pwhs.blockads.ui.theme.DangerRed
@@ -84,7 +88,10 @@ import app.pwhs.blockads.ui.home.component.HomeStatusHeader
 import app.pwhs.blockads.ui.home.component.MilestoneBottomSheet
 import app.pwhs.blockads.ui.home.component.MiniBarChartDefaults
 import app.pwhs.blockads.ui.home.component.NetworkSpeedSection
+import app.pwhs.blockads.ui.home.component.FeatureBadgeKind
+import app.pwhs.blockads.ui.home.component.FloatingFeatureChips
 import app.pwhs.blockads.ui.home.component.PowerButton
+import app.pwhs.blockads.ui.home.component.VpnPhaseActivityBanner
 import app.pwhs.blockads.ui.home.component.PrivateDnsWarningCard
 import app.pwhs.blockads.ui.home.component.RecentBlockedSection
 import app.pwhs.blockads.ui.home.component.RoutingModeBottomSheet
@@ -116,10 +123,13 @@ fun HomeScreen(
     onNavigateToLogsWithQuery: (String) -> Unit = {},
     onNavigateToBrowser: (String) -> Unit = {},
     onNavigateToFeature: (HomeFeatureTipType) -> Unit = {},
+    onFeatureBadgeClick: (FeatureBadgeKind) -> Unit = {},
 ) {
     val vpnEnabled by viewModel.vpnEnabled.collectAsStateWithLifecycle()
     val vpnConnecting by viewModel.vpnConnecting.collectAsStateWithLifecycle()
     val vpnStopping by viewModel.vpnStopping.collectAsStateWithLifecycle()
+    val vpnPhase by viewModel.vpnPhase.collectAsStateWithLifecycle()
+    val activeFeatureBadges by viewModel.activeFeatureBadges.collectAsStateWithLifecycle()
     val blockedCount by viewModel.blockedCount.collectAsStateWithLifecycle()
     val domainCount by viewModel.domainCount.collectAsStateWithLifecycle()
     val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
@@ -180,52 +190,6 @@ fun HomeScreen(
         ) { innerPadding ->
             val isRootMode = routingMode == AppPreferences.ROUTING_MODE_ROOT
             val tipState = rememberHomeTipState(viewModel, routingMode, onNavigateToFeature)
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 24.dp)
-                        .padding(bottom = if (tipState.isVisible) 100.dp else 24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    if (privateDnsWarning) {
-                        PrivateDnsWarningCard()
-                    }
-
-                    if (showRevokedWarning) {
-                        VpnRevokedWarningCard(
-                            onReconnect = {
-                                viewModel.dismissVpnRevokedWarning()
-                                if (!vpnConnecting && !vpnStopping) {
-                                    onRequestVpnPermission()
-                                }
-                            },
-                            onDismiss = {
-                                viewModel.dismissVpnRevokedWarning()
-                            }
-                        )
-                    }
-
-                    HomeStatusHeader(
-                        vpnStopping = vpnStopping,
-                        vpnConnecting = vpnConnecting,
-                        vpnEnabled = vpnEnabled,
-                        showTrustedPause = showTrustedPause,
-                        isRootMode = isRootMode,
-                        pausedTrustedSsid = pausedTrustedSsid,
-                        routingMode = routingMode,
-                        onRoutingModeClick = { showRoutingModeSheet = true }
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
             val haptic = LocalHapticFeedback.current
             val isFirstVpnChange = remember { mutableStateOf(true) }
             LaunchedEffect(vpnEnabled) {
@@ -236,156 +200,270 @@ fun HomeScreen(
                 }
             }
 
-            // Power button — never blocked by filter loading
-            PowerButton(
-                isActive = vpnEnabled,
-                isConnecting = vpnConnecting,
-                isStopping = vpnStopping,
-                onClick = {
-                    if (!vpnConnecting && !vpnStopping) {
-                        if (vpnEnabled) {
-                            viewModel.stopVpn(context)
-                        } else {
-                            viewModel.dismissVpnRevokedWarning()
-                            onRequestVpnPermission()
-                        }
-                    }
-                }
-            )
-
-            Spacer(modifier = Modifier.height(36.dp))
-            // Stats cards
             val totalChartData = remember(hourlyStats) {
                 MiniBarChartDefaults.createSparklineData(hourlyStats, isBlocked = false)
             }
             val blockedChartData = remember(hourlyStats) {
                 MiniBarChartDefaults.createSparklineData(hourlyStats, isBlocked = true)
             }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Min),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                StatCard(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                    icon = Icons.Default.QueryStats,
-                    label = stringResource(R.string.total_queries),
-                    value = formatCount(totalCount),
-                    color = MaterialTheme.colorScheme.secondary,
-                    chartData = totalChartData,
-                    showChevron = true,
-                    onClick = { onNavigateToLogScreen(LogFilterStatus.ALL) }
-                )
-                StatCard(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                    icon = Icons.Default.Block,
-                    label = stringResource(R.string.blocked_queries),
-                    value = formatCount(blockedCount),
-                    color = DangerRed,
-                    chartData = blockedChartData,
-                    showChevron = true,
-                    onClick = { onNavigateToLogScreen(LogFilterStatus.BLOCKED) }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Block rate + Data saved + Uptime card
             val dataSavedKb = blockedCount * AVG_AD_SIZE_KB
-            HomeBlockRateCard(
-                totalCount = totalCount,
-                blockedCount = blockedCount,
-                domainCount = domainCount
-            )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            val heroContent: @Composable () -> Unit = {
+                if (privateDnsWarning) {
+                    PrivateDnsWarningCard()
+                }
 
-            // Real-time network speed row
-            NetworkSpeedSection(networkSpeed = networkSpeed)
+                if (showRevokedWarning) {
+                    VpnRevokedWarningCard(
+                        onReconnect = {
+                            viewModel.dismissVpnRevokedWarning()
+                            if (!vpnConnecting && !vpnStopping) {
+                                onRequestVpnPermission()
+                            }
+                        },
+                        onDismiss = {
+                            viewModel.dismissVpnRevokedWarning()
+                        }
+                    )
+                }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Data saved + Protection uptime row
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Min),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                StatCard(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                    icon = Icons.Default.DataSaverOn,
-                    label = stringResource(R.string.home_data_saved),
-                    value = formatDataSize(dataSavedKb),
-                    color = MaterialTheme.colorScheme.primary
+                HomeStatusHeader(
+                    vpnStopping = vpnStopping,
+                    vpnConnecting = vpnConnecting,
+                    vpnEnabled = vpnEnabled,
+                    showTrustedPause = showTrustedPause,
+                    isRootMode = isRootMode,
+                    pausedTrustedSsid = pausedTrustedSsid,
+                    routingMode = routingMode,
+                    onRoutingModeClick = { showRoutingModeSheet = true }
                 )
-                StatCard(
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Power button with floating active-feature chips around it
+                Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                    icon = Icons.Default.Timer,
-                    label = stringResource(R.string.home_protection_uptime),
-                    value = formatUptimeShort(protectionUptimeMs),
-                    color = AccentBlue
+                        .fillMaxWidth()
+                        .height(198.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    FloatingFeatureChips(
+                        visible = vpnEnabled && !vpnStopping,
+                        badges = activeFeatureBadges,
+                        onBadgeClick = { kind ->
+                            if (kind == FeatureBadgeKind.TUNNEL_MODE) {
+                                showRoutingModeSheet = true
+                            } else {
+                                onFeatureBadgeClick(kind)
+                            }
+                        }
+                    )
+                    PowerButton(
+                        isActive = vpnEnabled,
+                        isConnecting = vpnConnecting,
+                        isStopping = vpnStopping,
+                        onClick = {
+                            if (!vpnConnecting && !vpnStopping) {
+                                if (vpnEnabled) {
+                                    viewModel.stopVpn(context)
+                                } else {
+                                    viewModel.dismissVpnRevokedWarning()
+                                    onRequestVpnPermission()
+                                }
+                            }
+                        }
+                    )
+                }
+
+                VpnPhaseActivityBanner(
+                    isConnecting = vpnConnecting,
+                    isStopping = vpnStopping,
+                    isActive = vpnEnabled,
+                    phase = vpnPhase
                 )
             }
 
-            // Activity Chart with time range selector
-            HomeActivityChart(
-                hourlyStats = hourlyStats,
-                dailyStats = dailyStats
-            )
-
-            // Top blocked domains
-            TopBlockedSection(
-                topBlockedDomains = topBlockedDomains,
-                onDomainClick = { entry ->
-                    selectedBlockedDomain = SelectedBlockedDomain(
-                        domain = entry.domain,
-                        count = entry.count
+            val statsContent: @Composable () -> Unit = {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    StatCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        icon = Icons.Default.QueryStats,
+                        label = stringResource(R.string.total_queries),
+                        value = formatCount(totalCount),
+                        color = MaterialTheme.colorScheme.secondary,
+                        chartData = totalChartData,
+                        showChevron = true,
+                        onClick = { onNavigateToLogScreen(LogFilterStatus.ALL) }
+                    )
+                    StatCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        icon = Icons.Default.Block,
+                        label = stringResource(R.string.blocked_queries),
+                        value = formatCount(blockedCount),
+                        color = DangerRed,
+                        chartData = blockedChartData,
+                        showChevron = true,
+                        onClick = { onNavigateToLogScreen(LogFilterStatus.BLOCKED) }
                     )
                 }
-            )
 
-            // Recent blocked domains
-            RecentBlockedSection(
-                recentBlocked = recentBlocked,
-                securityFilterIds = securityFilterIds,
-                currentFilter = recentFilter,
-                onFilterChange = { viewModel.setRecentFilter(it) },
-                onViewAllClick = { onNavigateToLogScreen(LogFilterStatus.ALL) },
-                onEntryClick = { entry ->
-                    selectedBlockedDomain = SelectedBlockedDomain(
-                        domain = entry.domain,
-                        appName = entry.appName,
-                        packageName = entry.packageName,
-                        blockedBy = entry.blockedBy,
-                        isBlocked = entry.isBlocked
+                Spacer(modifier = Modifier.height(12.dp))
+
+                HomeBlockRateCard(
+                    totalCount = totalCount,
+                    blockedCount = blockedCount,
+                    domainCount = domainCount
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                NetworkSpeedSection(networkSpeed = networkSpeed)
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    StatCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        icon = Icons.Default.DataSaverOn,
+                        label = stringResource(R.string.home_data_saved),
+                        value = formatDataSize(dataSavedKb),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    StatCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        icon = Icons.Default.Timer,
+                        label = stringResource(R.string.home_protection_uptime),
+                        value = formatUptimeShort(protectionUptimeMs),
+                        color = AccentBlue
                     )
                 }
-            )
 
-            Spacer(modifier = Modifier.height(24.dp))
-        }
+                HomeActivityChart(
+                    hourlyStats = hourlyStats,
+                    dailyStats = dailyStats
+                )
 
-        AnimatedVisibility(
-            visible = tipState.isVisible,
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-        ) {
-            HomeActiveTipCard(tipState = tipState)
-        }
-        }
+                TopBlockedSection(
+                    topBlockedDomains = topBlockedDomains,
+                    onDomainClick = { entry ->
+                        selectedBlockedDomain = SelectedBlockedDomain(
+                            domain = entry.domain,
+                            count = entry.count
+                        )
+                    }
+                )
+
+                RecentBlockedSection(
+                    recentBlocked = recentBlocked,
+                    securityFilterIds = securityFilterIds,
+                    currentFilter = recentFilter,
+                    onFilterChange = { viewModel.setRecentFilter(it) },
+                    onViewAllClick = { onNavigateToLogScreen(LogFilterStatus.ALL) },
+                    onEntryClick = { entry ->
+                        selectedBlockedDomain = SelectedBlockedDomain(
+                            domain = entry.domain,
+                            appName = entry.appName,
+                            packageName = entry.packageName,
+                            blockedBy = entry.blockedBy,
+                            isBlocked = entry.isBlocked
+                        )
+                    }
+                )
+            }
+
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                val isTwoPane = rememberIsExpandedLayout(maxWidth)
+
+                val floatingBottomPadding = LocalFloatingBottomBarPadding.current
+                if (isTwoPane) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(0.44f)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState())
+                                .padding(top = 24.dp, bottom = 24.dp + floatingBottomPadding),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Top
+                        ) {
+                            heroContent()
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .weight(0.56f)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState())
+                                .padding(
+                                    top = 16.dp,
+                                    bottom = (if (tipState.isVisible) 100.dp else 24.dp) + floatingBottomPadding
+                                ),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            statsContent()
+                        }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 24.dp)
+                            .padding(bottom = (if (tipState.isVisible) 100.dp else 24.dp) + floatingBottomPadding),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        heroContent()
+                        Spacer(modifier = Modifier.height(18.dp))
+                        statsContent()
+                        Spacer(modifier = Modifier.height(24.dp))
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = tipState.isVisible,
+                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+                    modifier = Modifier
+                        .align(if (isTwoPane) Alignment.BottomEnd else Alignment.BottomCenter)
+                        .widthIn(max = 520.dp)
+                        .padding(
+                            start = 16.dp,
+                            end = 16.dp,
+                            top = 8.dp,
+                            bottom = 8.dp + floatingBottomPadding
+                        )
+                ) {
+                    HomeActiveTipCard(tipState = tipState)
+                }
+            }
 
         milestoneReached?.let { milestone ->
             MilestoneBottomSheet(

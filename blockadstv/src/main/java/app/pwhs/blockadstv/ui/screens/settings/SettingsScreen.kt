@@ -273,7 +273,7 @@ fun SettingsScreen(
                 SettingListItem(
                     iconRes = R.drawable.ic_shield,
                     title = stringResource(R.string.settings_about),
-                    subtitle = "BlockAds TV v${app.pwhs.blockadstv.BuildConfig.VERSION_NAME} (Build ${app.pwhs.blockadstv.BuildConfig.VERSION_CODE})",
+                    subtitle = "${stringResource(R.string.app_name)} v${app.pwhs.blockadstv.BuildConfig.VERSION_NAME} (Build ${app.pwhs.blockadstv.BuildConfig.VERSION_CODE})",
                     isToggle = false,
                     isEnabled = false,
                     onClick = {},
@@ -457,6 +457,7 @@ private fun getLanguageDisplayName(code: String): String = when (code) {
     TvPreferences.LANGUAGE_RU -> stringResource(R.string.settings_lang_ru) + " (🇷🇺)"
     TvPreferences.LANGUAGE_TH -> stringResource(R.string.settings_lang_th) + " (🇹🇭)"
     TvPreferences.LANGUAGE_TR -> stringResource(R.string.settings_lang_tr) + " (🇹🇷)"
+    TvPreferences.LANGUAGE_HU -> stringResource(R.string.settings_lang_hu) + " (🇭🇺)"
     TvPreferences.LANGUAGE_UK -> stringResource(R.string.settings_lang_uk) + " (🇺🇦)"
     TvPreferences.LANGUAGE_ZH -> stringResource(R.string.settings_lang_zh) + " (🇨🇳)"
     else -> stringResource(R.string.settings_lang_system)
