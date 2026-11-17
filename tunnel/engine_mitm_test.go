@@ -316,3 +316,32 @@ HOST-SUFFIX, ads-network.net, REJECT
 		t.Errorf("Expected sub.ads-network.net to be blocked")
 	}
 }
+
+// Auto-bypass is off after StartStackMitm; a client handshake failure is
+// logged to mitm_handshake_failures.txt and never touches mitm_blacklist.txt.
+func TestStartStackMitmAutoBypassDefaultOff(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine()
+	if e.StartStackMitm(dir) == "" {
+		t.Fatal("StartStackMitm failed")
+	}
+	f := e.stackMitmFilter
+	if f.AutoBypassEnabled() {
+		t.Fatal("auto-bypass on by default")
+	}
+	f.RecordHandshakeFailure("pinned.example", "bad certificate")
+	if !f.IsInterceptionAllowed("pinned.example") {
+		t.Fatal("host bypassed with auto-bypass off")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "mitm_blacklist.txt")); !os.IsNotExist(err) {
+		t.Fatalf("bypass list written: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "mitm_handshake_failures.txt"))
+	if err != nil || !strings.Contains(string(b), "pinned.example") {
+		t.Fatalf("diagnostic file: %q %v", b, err)
+	}
+	e.SetMitmAutoBypass(true)
+	if !f.AutoBypassEnabled() {
+		t.Fatal("SetMitmAutoBypass(true) did not reach the filter")
+	}
+}

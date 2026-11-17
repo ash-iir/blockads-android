@@ -115,6 +115,7 @@ type Engine struct
 	method Engine.SetGeoIPDatabaseFromFd(fd int, offset int64, length int64) error
 	method Engine.SetLogCallback(cb LogCallback)
 	method Engine.SetMitmAllowedUIDs(uidsCsv string)
+	method Engine.SetMitmAutoBypass(enabled bool)
 	method Engine.SetModulesConfig(jsonStr string) error
 	method Engine.SetODoHRelay(relayURL string)
 	method Engine.SetOutboundAdapter(adapter OutboundAdapter)
@@ -163,6 +164,7 @@ const LocalAssetHost untyped string = "local.pwhs.app"
 type LogCallback interface
 	method LogCallback.OnDNSQuery(domain string, blocked bool, queryType int, responseTimeMs int64, appName string, resolvedIP string, blockedBy string)
 type MitmFilter = internal/mitm.MitmFilter
+	method MitmFilter.AutoBypassEnabled() bool
 	method MitmFilter.BlacklistDomain(host string)
 	method MitmFilter.FirstAllowedUID() int
 	method MitmFilter.GetBlacklistCount() int
@@ -171,9 +173,12 @@ type MitmFilter = internal/mitm.MitmFilter
 	method MitmFilter.IsInterceptionAllowed(host string) bool
 	method MitmFilter.IsUIDAllowed(uid int) bool
 	method MitmFilter.LoadPersistentBlacklist(path string)
+	method MitmFilter.RecordHandshakeFailure(host string, reason string) bool
 	method MitmFilter.SetAdPathPatterns(patterns []string)
 	method MitmFilter.SetAllowedUIDs(uids []int)
+	method MitmFilter.SetAutoBypass(enabled bool)
 	method MitmFilter.SetExtraPassthroughSuffixes(suffixes []string)
+	method MitmFilter.SetFailureLogPath(path string)
 type MmapTrie = internal/trie.MmapTrie
 	method MmapTrie.Close()
 	method MmapTrie.ContainsOrParent(domain string) bool

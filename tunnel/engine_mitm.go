@@ -59,8 +59,24 @@ func (e *Engine) StartStackMitm(certDir string) string {
 	// domains discovered in one session are remembered in the next —
 	// otherwise every pinned site breaks once per app launch.
 	filter.LoadPersistentBlacklist(filepath.Join(certDir, "mitm_blacklist.txt"))
+	// Hosts whose client handshake fails are not added to that list
+	// automatically (auto-bypass defaults off); they are recorded here.
+	filter.SetFailureLogPath(filepath.Join(certDir, "mitm_handshake_failures.txt"))
 
 	return certMgr.GetCACertPEM()
+}
+
+// SetMitmAutoBypass opts in to (or out of) automatically adding hosts
+// whose TLS handshake fails to the persistent bypass list. Off by
+// default; manual entries in mitm_blacklist.txt are honoured either way.
+func (e *Engine) SetMitmAutoBypass(enabled bool) {
+	e.mu.Lock()
+	if e.stackMitmFilter == nil {
+		e.stackMitmFilter = NewMitmFilter()
+	}
+	filter := e.stackMitmFilter
+	e.mu.Unlock()
+	filter.SetAutoBypass(enabled)
 }
 
 // StopStackMitm clears stack-mode MITM state. The stack itself keeps

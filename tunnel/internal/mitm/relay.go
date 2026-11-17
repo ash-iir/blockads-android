@@ -97,8 +97,8 @@ func mitmTLSFlow(
 			if clientCertRequested {
 				reason = "client-certificate (mTLS) request"
 			}
-			logf("MITM: not filtering '%s' — %s; passthrough", hostname, reason)
-			filter.BlacklistDomain(hostname)
+			logf("MITM: not filtering '%s' — %s; passthrough for this connection", hostname, reason)
+			filter.RecordHandshakeFailure(hostname, reason)
 			serverConn.Close()
 			logMitmQuery(blocker, flow, hostname, false, "", 65)
 			relayDirectPeeked(clientConn, clientReader, flow, hostname, blocker, protectFn)
@@ -109,13 +109,11 @@ func mitmTLSFlow(
 	tlsCfg := certMgr.GetDynamicTLSConfigForHost(hostname)
 	clientTLS := tls.Server(&peekReplayConn{Conn: clientConn, r: clientReader}, tlsCfg)
 	if err := clientTLS.Handshake(); err != nil {
-		errStr := err.Error()
-		if strings.Contains(errStr, "unknown certificate") ||
-			strings.Contains(errStr, "handshake failure") ||
-			strings.Contains(errStr, "certificate unknown") ||
-			strings.Contains(errStr, "bad certificate") ||
-			strings.Contains(errStr, "tls:") {
-			filter.BlacklistDomain(hostname)
+		// The client refused our certificate (pinning, or the CA is not
+		// trusted). Close the connection; record the host for diagnosis.
+		// It is added to the bypass list only when auto-bypass is on.
+		if isClientCertRejection(err.Error()) {
+			filter.RecordHandshakeFailure(hostname, "client handshake: "+err.Error())
 		}
 		return
 	}
@@ -303,4 +301,16 @@ func intToStr(i int) string {
 		buf[pos] = '-'
 	}
 	return string(buf[pos:])
+}
+
+// isClientCertRejection reports whether a client-side handshake error
+// means the client rejected the certificate we presented (as opposed to
+// a client that never spoke TLS, or a dropped connection).
+func isClientCertRejection(errStr string) bool {
+	for _, s := range []string{"unknown certificate", "handshake failure", "certificate unknown", "bad certificate", "unknown certificate authority", "certificate required"} {
+		if strings.Contains(errStr, s) {
+			return true
+		}
+	}
+	return false
 }

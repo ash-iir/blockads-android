@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -12,8 +13,12 @@ import (
 //
 // Three-layer decision engine (checked in order):
 //   1. UID Check      → Only allowed UIDs (browsers) are candidates for MITM.
-//   2. Auto-Blacklist → Domains that failed TLS handshake are permanently
-//                       passed through (cert pinning detected).
+//   2. Bypass list    → Domains listed in the persistent bypass file
+//                       (mitm_blacklist.txt) are passed through. Hosts are
+//                       added to it automatically only when auto-bypass is
+//                       switched on (SetAutoBypass, default OFF); otherwise a
+//                       failed client handshake is only recorded in the
+//                       diagnostic file (mitm_handshake_failures.txt).
 //   3. SNI Keywords   → If the domain contains sensitive keywords (bank, pay,
 //                       auth, etc.), pass through immediately.
 //
@@ -56,6 +61,22 @@ type MitmFilter struct {
 	// so disk writes never block interception decisions.
 	blacklistPath   string
 	blacklistFileMu sync.Mutex
+
+	// autoBypass, when true, restores the old behaviour: a host whose
+	// client-side TLS handshake fails, or whose upstream is EV / asks for
+	// a client certificate, is added to the persistent bypass list. Default
+	// false: such hosts are never added to the list automatically; the
+	// connection is just closed (or passed through for that one connection
+	// in the EV / mTLS case) and the host is written to failureLogPath.
+	autoBypass bool
+
+	// failureLogPath is the diagnostic file (one "host<TAB>reason" line per
+	// host and reason, deduplicated per session) where handshake failures
+	// and high-assurance passthroughs are recorded instead of the bypass
+	// list. Guarded by failureFileMu for writes.
+	failureLogPath string
+	failureSeen    map[string]bool
+	failureFileMu  sync.Mutex
 }
 
 // sniSensitiveKeywords — if a domain contains any of these, NEVER intercept.
@@ -130,7 +151,75 @@ func NewMitmFilter() *MitmFilter {
 	return &MitmFilter{
 		allowedUIDs:        make(map[int]bool),
 		permanentBlacklist: make(map[string]bool),
+		failureSeen:        make(map[string]bool),
 	}
+}
+
+// SetAutoBypass switches automatic additions to the persistent bypass
+// list on or off. Off by default.
+func (f *MitmFilter) SetAutoBypass(enabled bool) {
+	f.mu.Lock()
+	f.autoBypass = enabled
+	f.mu.Unlock()
+	logf("MITM Filter: auto-bypass on handshake failure %v", enabled)
+}
+
+// AutoBypassEnabled reports whether automatic bypass-list additions are on.
+func (f *MitmFilter) AutoBypassEnabled() bool {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.autoBypass
+}
+
+// SetFailureLogPath points the filter at the diagnostic file used by
+// RecordHandshakeFailure. Empty disables the file (logcat only).
+func (f *MitmFilter) SetFailureLogPath(path string) {
+	f.mu.Lock()
+	f.failureLogPath = path
+	f.mu.Unlock()
+}
+
+// RecordHandshakeFailure is called when MITM could not be applied to a
+// host (the client rejected our certificate, or the upstream is EV / asks
+// for a client certificate). It always records the host in the diagnostic
+// file; it adds the host to the bypass list only when auto-bypass is on.
+// Returns true when the host was added to the bypass list.
+func (f *MitmFilter) RecordHandshakeFailure(host, reason string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	reason = strings.Join(strings.Fields(reason), " ")
+	if len(reason) > 200 {
+		reason = reason[:200]
+	}
+
+	f.mu.Lock()
+	auto := f.autoBypass
+	path := f.failureLogPath
+	key := host + "\t" + reason
+	seen := f.failureSeen[key]
+	f.failureSeen[key] = true
+	f.mu.Unlock()
+
+	if !seen {
+		logf("MITM Filter: handshake/passthrough on '%s' (%s); auto-bypass %v", host, reason, auto)
+		if path != "" {
+			f.failureFileMu.Lock()
+			if file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+				file.WriteString(time.Now().Format(time.RFC3339) + "\t" + host + "\t" + reason + "\n")
+				file.Close()
+			} else {
+				logf("MITM Filter: WARNING — cannot write failure log: %v", err)
+			}
+			f.failureFileMu.Unlock()
+		}
+	}
+	if auto {
+		f.BlacklistDomain(host)
+		return true
+	}
+	return false
 }
 
 // SetAllowedUIDs replaces the set of UIDs allowed for MITM interception.
@@ -300,9 +389,9 @@ func (f *MitmFilter) IsInterceptionAllowed(host string) bool {
 	return true
 }
 
-// BlacklistDomain permanently adds a domain to the passthrough cache.
-// Called when a TLS handshake fails (cert pinning detected) or when a
-// proactive probe finds an EV / mutual-TLS endpoint. The entry is also
+// BlacklistDomain permanently adds a domain to the passthrough cache
+// (the user's bypass list). Called for explicit bypass requests, and by
+// RecordHandshakeFailure only when auto-bypass is on. The entry is also
 // appended to the persistent blacklist file (if configured) so the
 // decision survives restarts.
 func (f *MitmFilter) BlacklistDomain(host string) {
@@ -320,7 +409,7 @@ func (f *MitmFilter) BlacklistDomain(host string) {
 	if alreadyKnown {
 		return // already recorded — don't log or rewrite the file again
 	}
-	logf("MITM Filter: auto-blacklisted '%s' (pinning/EV/mTLS detected)", host)
+	logf("MITM Filter: added '%s' to the bypass list", host)
 
 	if path != "" {
 		f.appendBlacklistLine(path, host)

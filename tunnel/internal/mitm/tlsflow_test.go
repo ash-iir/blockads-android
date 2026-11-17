@@ -14,6 +14,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -161,7 +163,8 @@ func TestMitmTLSFlowInterceptsAndInjects(t *testing.T) {
 }
 
 // High-assurance upstreams (EV cert, or a client-certificate request) are
-// blacklisted and passed through, so the client talks to the real server.
+// passed through for that connection, so the client talks to the real
+// server, but are not added to the bypass list (auto-bypass is off).
 func TestMitmTLSFlowPassthroughHighAssurance(t *testing.T) {
 	pki := newTestPKI(t)
 	upstreamRootPool().AddCert(pki.cert)
@@ -192,8 +195,8 @@ func TestMitmTLSFlowPassthroughHighAssurance(t *testing.T) {
 			if got := c.ConnectionState().PeerCertificates[0].Raw; string(got) != string(leaf.Certificate[0]) {
 				t.Fatal("client did not see the real upstream cert")
 			}
-			if filter.IsInterceptionAllowed(tc.host) {
-				t.Fatal("host was not blacklisted")
+			if filter.GetBlacklistCount() != 0 || !filter.IsInterceptionAllowed(tc.host) {
+				t.Fatal("high-assurance host was added to the bypass list with auto-bypass off")
 			}
 			c.Close()
 			waitClosed(t, done)
@@ -236,15 +239,53 @@ func TestMitmTLSFlowClientRejectsCertBlacklists(t *testing.T) {
 	}
 	cli.Close()
 	waitClosed(t, done)
-	if filter.IsInterceptionAllowed("pinned.test") {
-		t.Fatal("pinned host not blacklisted after the client rejected our cert")
+	if !filter.IsInterceptionAllowed("pinned.test") || filter.GetBlacklistCount() != 0 {
+		t.Fatal("host added to the bypass list although auto-bypass is off")
 	}
 }
 
-// Any error string containing "tls:" blacklists the host, including
-// failures that have nothing to do with pinning.
+func TestMitmTLSFlowClientRejectsCertLogsDiagnostic(t *testing.T) {
+	pki := newTestPKI(t)
+	upstreamRootPool().AddCert(pki.cert)
+	cm, _ := newTestCertManager(t)
+	flow := startUpstream(t, pki.leaf(t, "pinned2.test"), tls.NoClientCert, htmlHandler)
+	filter := NewMitmFilter()
+	logPath := filepath.Join(t.TempDir(), "mitm_handshake_failures.txt")
+	filter.SetFailureLogPath(logPath)
+	cli, done := runTLSFlow(t, cm, filter, "pinned2.test", flow)
+	c := tls.Client(cli, &tls.Config{ServerName: "pinned2.test", RootCAs: x509.NewCertPool()})
+	if err := c.Handshake(); err == nil {
+		t.Fatal("client accepted an untrusted MITM cert")
+	}
+	cli.Close()
+	waitClosed(t, done)
+	data, err := os.ReadFile(logPath)
+	if err != nil || !strings.Contains(string(data), "\tpinned2.test\t") {
+		t.Fatalf("handshake failure not recorded: %q %v", data, err)
+	}
+}
+
+func TestMitmTLSFlowClientRejectsCertAutoBypassOptIn(t *testing.T) {
+	pki := newTestPKI(t)
+	upstreamRootPool().AddCert(pki.cert)
+	cm, _ := newTestCertManager(t)
+	flow := startUpstream(t, pki.leaf(t, "pinned3.test"), tls.NoClientCert, htmlHandler)
+	filter := NewMitmFilter()
+	filter.SetAutoBypass(true)
+	cli, done := runTLSFlow(t, cm, filter, "pinned3.test", flow)
+	c := tls.Client(cli, &tls.Config{ServerName: "pinned3.test", RootCAs: x509.NewCertPool()})
+	if err := c.Handshake(); err == nil {
+		t.Fatal("client accepted an untrusted MITM cert")
+	}
+	cli.Close()
+	waitClosed(t, done)
+	if filter.IsInterceptionAllowed("pinned3.test") {
+		t.Fatal("auto-bypass on, but the pinned host was not added to the bypass list")
+	}
+}
+
+// A client that never speaks TLS is not a certificate rejection.
 func TestMitmTLSFlowNonPinningErrorDoesNotBlacklist(t *testing.T) {
-	t.Skip("known bug: the blacklist trigger matches any error containing \"tls:\"")
 	pki := newTestPKI(t)
 	upstreamRootPool().AddCert(pki.cert)
 	cm, _ := newTestCertManager(t)

@@ -192,3 +192,46 @@ func TestFilterConcurrentAccess(t *testing.T) {
 		t.Fatalf("blacklist count = %d, want 50", f.GetBlacklistCount())
 	}
 }
+
+func TestRecordHandshakeFailureDefaultOff(t *testing.T) {
+	dir := t.TempDir()
+	bl := filepath.Join(dir, "mitm_blacklist.txt")
+	fl := filepath.Join(dir, "mitm_handshake_failures.txt")
+	if err := os.WriteFile(bl, []byte("manual.example\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	f := NewMitmFilter()
+	f.LoadPersistentBlacklist(bl)
+	f.SetFailureLogPath(fl)
+	if f.AutoBypassEnabled() {
+		t.Fatal("auto-bypass must default off")
+	}
+	if f.RecordHandshakeFailure("Site.Example", "bad certificate") {
+		t.Fatal("reported a bypass-list addition with auto-bypass off")
+	}
+	f.RecordHandshakeFailure("site.example", "bad certificate") // deduped
+	f.RecordHandshakeFailure("", "x")                           // ignored
+	if !f.IsInterceptionAllowed("site.example") {
+		t.Fatal("failed host bypassed with auto-bypass off")
+	}
+	if f.IsInterceptionAllowed("manual.example") {
+		t.Fatal("manual bypass entry no longer honoured")
+	}
+	data, _ := os.ReadFile(bl)
+	if string(data) != "manual.example\n" {
+		t.Fatalf("bypass list changed: %q", data)
+	}
+	log, _ := os.ReadFile(fl)
+	if n := strings.Count(string(log), "\tsite.example\tbad certificate\n"); n != 1 {
+		t.Fatalf("diagnostic log has %d lines for site.example:\n%s", n, log)
+	}
+
+	f.SetAutoBypass(true)
+	if !f.RecordHandshakeFailure("optin.example", "bad certificate") || f.IsInterceptionAllowed("optin.example") {
+		t.Fatal("opt-in auto-bypass did not add the host")
+	}
+	data, _ = os.ReadFile(bl)
+	if !strings.Contains(string(data), "optin.example\n") {
+		t.Fatalf("opt-in entry not persisted: %q", data)
+	}
+}
