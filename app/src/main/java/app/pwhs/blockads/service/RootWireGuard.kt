@@ -64,7 +64,13 @@ object RootWireGuard {
     data class Session(val configJson: String, val profileName: String)
 
     fun helperBinary(context: Context): File =
-        File(context.applicationInfo.nativeLibraryDir, BINARY_NAME)
+        File(context.applicationInfo.nativeLibraryDir, BINARY_NAME).also { knownBinary = it.absolutePath }
+
+    /** Helper path once a Context has been seen; teardown runs without one. */
+    @Volatile
+    internal var knownBinary: String? = null
+
+    internal const val PACKAGE = "app.pwhs.blockads"
 
     // ── pure parts (unit tested) ─────────────────────────────────────
 
@@ -166,11 +172,29 @@ object RootWireGuard {
     }
 
     /**
+     * `<helper> down`: removes our rules over netlink (matched on pref AND
+     * attributes, including the ipproto/dport DNS rules that Android's old
+     * `ip` can neither add nor show), the table and the interface. Without a
+     * known path, every installed copy of the helper is tried.
+     */
+    internal fun downCommand(binary: String?): String =
+        if (binary != null) {
+            "'$binary' down 2>/dev/null"
+        } else {
+            "for b in /data/app/*/$PACKAGE-*/lib/*/$BINARY_NAME /data/app/$PACKAGE-*/lib/*/$BINARY_NAME; do " +
+                "[ -x \"\$b\" ] && \"\$b\" down 2>/dev/null && break; done"
+        }
+
+    /**
      * Removes rules (only ours: prefs 10000–10099 with table 980 / goto 10099 /
      * nop), the table and the interface. Needs no config and is safe to run
-     * any number of times, also when the feature was never on.
+     * any number of times, also when the feature was never on. The helper's
+     * netlink `down` goes first; the `ip` lines after it are a fallback that
+     * only uses what iproute2 ss171113 understands (lookup / goto / nop, each
+     * with its attribute, never a bare pref).
      */
-    internal fun cleanupCommands(): List<String> = buildList {
+    internal fun cleanupCommands(binary: String? = knownBinary): List<String> = buildList {
+        add(downCommand(binary))
         for (f in listOf("-4", "-6")) {
             add(
                 "for p in \$(ip $f rule show 2>/dev/null | grep -E '^100[0-9][0-9]:' | cut -d: -f1 | sort -un); do " +

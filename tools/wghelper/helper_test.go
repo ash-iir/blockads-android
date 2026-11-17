@@ -79,7 +79,7 @@ func TestRejectsBadInput(t *testing.T) {
 func TestPlanV4OnlyFullTunnelBlocksV6(t *testing.T) {
 	c := mustParse(t, baseJSON(""))
 	p := BuildPlan(c)
-	r := joined(p.Routes)
+	r := joined(RouteCmds(p.Routes))
 	for _, want := range []string{
 		"ip -4 route replace default dev bawg0 table 980",
 		"ip -6 route replace unreachable default table 980",
@@ -91,7 +91,7 @@ func TestPlanV4OnlyFullTunnelBlocksV6(t *testing.T) {
 	if strings.Contains(r, "-6 route replace default dev") {
 		t.Errorf("v6 routed without a v6 address:\n%s", r)
 	}
-	l := joined(p.Link)
+	l := joined(p.LinkCmds())
 	if !strings.Contains(l, "ip -4 addr add 10.66.66.2/32 dev bawg0") || !strings.Contains(l, "ip link set dev bawg0 mtu 1280 up") {
 		t.Errorf("link:\n%s", l)
 	}
@@ -102,14 +102,14 @@ func TestPlanDualStackKillSwitchAndLAN(t *testing.T) {
 		`["10.66.66.2/32"]`, `["10.66.66.2/24","fd42::2/64"]`, 1)
 	c := mustParse(t, js)
 	p := BuildPlan(c)
-	r := joined(p.Routes)
+	r := joined(RouteCmds(p.Routes))
 	for _, want := range []string{
 		"ip -4 route replace default dev bawg0 table 980",
 		"ip -6 route replace default dev bawg0 table 980",
 		"ip -4 route replace 10.66.66.0/24 dev bawg0 table 980",
 		"ip -6 route replace fd42::/64 dev bawg0 table 980",
-		"ip -4 route replace unreachable default metric 4294967295 table 980",
-		"ip -6 route replace unreachable default metric 4294967295 table 980",
+		"ip -4 route replace unreachable default metric 2147483647 table 980",
+		"ip -6 route replace unreachable default metric 2147483647 table 980",
 		"ip -4 route replace throw 192.168.0.0/16 table 980",
 		"ip -4 route replace throw 10.0.0.0/8 table 980",
 		"ip -6 route replace throw fe80::/10 table 980",
@@ -121,7 +121,7 @@ func TestPlanDualStackKillSwitchAndLAN(t *testing.T) {
 	if strings.Contains(r, "-6 route replace unreachable default table") {
 		t.Errorf("v6 blocked although the tunnel has v6:\n%s", r)
 	}
-	if !strings.Contains(joined(p.Link), "mtu 1420") {
+	if !strings.Contains(joined(p.LinkCmds()), "mtu 1420") {
 		t.Error("mtu not applied")
 	}
 }
@@ -129,7 +129,7 @@ func TestPlanDualStackKillSwitchAndLAN(t *testing.T) {
 func TestPlanSplitTunnelDoesNotBlockOtherFamily(t *testing.T) {
 	js := strings.Replace(baseJSON(""), `["0.0.0.0/0","::/0"]`, `["10.8.0.0/16"]`, 1)
 	c := mustParse(t, js)
-	r := joined(BuildPlan(c).Routes)
+	r := joined(RouteCmds(BuildPlan(c).Routes))
 	if !strings.Contains(r, "ip -4 route replace 10.8.0.0/16 dev bawg0 table 980") {
 		t.Errorf("split route missing:\n%s", r)
 	}
@@ -141,7 +141,7 @@ func TestPlanSplitTunnelDoesNotBlockOtherFamily(t *testing.T) {
 func TestRulesOrderAndPrefs(t *testing.T) {
 	c := mustParse(t, baseJSON(""))
 	p := BuildPlan(c)
-	rules := joined(p.Rules)
+	rules := joined(RuleAddCmds(p.Rules))
 	for _, f := range []string{"-4", "-6"} {
 		idx := func(s string) int { return strings.Index(rules, "ip "+f+" rule add pref "+s) }
 		nop, app, dnsU, dnsT, r0, r1 := idx("10099 nop"), idx("10002 uidrange 10682-10682 lookup 980"),
@@ -156,89 +156,161 @@ func TestRulesOrderAndPrefs(t *testing.T) {
 			t.Errorf("%s order wrong:\n%s", f, rules)
 		}
 	}
-	for _, c := range p.Rules {
-		s := c.String()
-		var pref int
-		for i, a := range c {
-			if a == "pref" {
-				pref = atoi(c[i+1])
-			}
+	for _, r := range p.Rules {
+		if r.Pref < PrefFirst || r.Pref > PrefLast || r.Pref == PrefSelftestGoto || r.Pref == PrefSelftestNop {
+			t.Errorf("pref out of range: %s", r.AddCmd())
 		}
-		if pref < PrefFirst || pref > PrefLast {
-			t.Errorf("pref out of range: %s", s)
+		if r.Action == ActGoto && r.Goto <= r.Pref {
+			t.Errorf("goto must jump forward: %s", r.AddCmd())
 		}
 	}
-	if probe := joined(p.Probe); !strings.Contains(probe, "ip -4 rule add pref 10001 fwmark 0x40000000/0x40000000 lookup 980") {
+	if probe := joined(RuleAddCmds(p.Probe)); !strings.Contains(probe, "ip -4 rule add pref 10001 fwmark 0x40000000/0x40000000 lookup 980") {
 		t.Errorf("probe rule: %s", probe)
 	}
-}
-
-func atoi(s string) int {
-	n := 0
-	for _, ch := range s {
-		n = n*10 + int(ch-'0')
-	}
-	return n
 }
 
 func TestTeardownReversesRules(t *testing.T) {
 	c := mustParse(t, baseJSON(""))
 	p := BuildPlan(c)
-	td := p.Teardown(c)
-	if len(td) != len(p.Rules)+len(p.Probe)+3 {
+	td := p.TeardownRules()
+	if len(td) != len(p.Rules)+len(p.Probe) {
 		t.Fatalf("teardown length %d", len(td))
 	}
-	// App ranges go first, nop target last among rules.
-	if !strings.Contains(td[0].String(), "rule del pref 10011") {
-		t.Errorf("first teardown step: %s", td[0])
+	// App ranges go first, the probe rule last.
+	if got := td[0].DelCmd().String(); got != "ip -6 rule del pref 10011 uidrange 10686-19999 lookup 980" {
+		t.Errorf("first teardown step: %s", got)
 	}
-	last := td[len(td)-1].String()
-	if last != "ip link del dev bawg0" {
-		t.Errorf("last teardown step: %s", last)
+	if td[len(td)-1].Pref != PrefProbe {
+		t.Errorf("last teardown step: %s", td[len(td)-1].DelCmd())
 	}
-	for _, x := range td {
-		if strings.Contains(x.String(), " add ") {
-			t.Errorf("teardown adds: %s", x)
-		}
+	tail := joined(CleanupTail(980, "bawg0"))
+	if !strings.HasSuffix(tail, "ip link del dev bawg0\n") {
+		t.Errorf("tail: %s", tail)
 	}
 }
 
-const ruleShow = `0:	from all lookup local
-9999:	from all fwmark 0x10000000/0x10000000 lookup local_network
-10000:	from all fwmark 0xc0000/0xd0000 lookup legacy_system
-10001:	from all fwmark 0x40000000/0x40000000 lookup 980
-10002:	from all uidrange 10682-10682 lookup 980
-10003:	from all ipproto udp dport 53 goto 10099
-10004:	from all ipproto tcp dport 53 goto 10099 [unresolved]
-10010:	from all uidrange 10000-10684 lookup 980
-10050:	from all uidrange 10000-19999 lookup 1050
-10099:	from all nop
-11000:	from all iif lo oif dummy0 uidrange 0-0 lookup dummy0
-32000:	from all unreachable
-`
+// kernelDump builds what the kernel dumps for a rule: our encoding plus the
+// attributes fib_nl_fill_rule always adds (table, suppress_*, protocol).
+func kernelDump(r RuleSpec, extra ...func([]byte) []byte) KRule {
+	b := EncodeRule(r)
+	if r.Action == ActTable && r.Table >= 256 {
+		b[4] = 252 // RT_TABLE_COMPAT
+	}
+	if r.Action != ActTable {
+		b = appendAttr(b, fraTable, u32(0))
+	}
+	b = appendAttr(b, fraSuppressPrefixlen, u32(0xffffffff))
+	b = appendAttr(b, fraProtocol, []byte{3})
+	for _, e := range extra {
+		b = e(b)
+	}
+	k, err := ParseRule(b)
+	if err != nil {
+		panic(err)
+	}
+	return k
+}
 
-func TestOwnedRuleDeletesOnlyOurs(t *testing.T) {
-	del := OwnedRuleDeletes("-4", ruleShow, 980)
-	got := joined(del)
-	for _, want := range []string{
-		"ip -4 rule del pref 10001 from all fwmark 0x40000000/0x40000000 lookup 980",
-		"ip -4 rule del pref 10002 from all uidrange 10682-10682 lookup 980",
-		"ip -4 rule del pref 10003 from all ipproto udp dport 53 goto 10099",
-		"ip -4 rule del pref 10004 from all ipproto tcp dport 53 goto 10099",
-		"ip -4 rule del pref 10010 from all uidrange 10000-10684 lookup 980",
-		"ip -4 rule del pref 10099 from all nop",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in\n%s", want, got)
+func TestEncodeParseRoundTrip(t *testing.T) {
+	c := mustParse(t, baseJSON(""))
+	p := BuildPlan(c)
+	for _, r := range append(p.Probe, p.Rules...) {
+		k := kernelDump(r)
+		if k.Foreign {
+			t.Errorf("own rule parsed as foreign: %s", r.AddCmd())
+		}
+		if !FindRule([]KRule{k}, r) {
+			t.Errorf("round trip lost attributes: %s -> %s", r.AddCmd(), k)
+		}
+		if !Owned(k, 980) {
+			t.Errorf("own rule not owned: %s", k)
 		}
 	}
-	for _, not := range []string{"legacy_system", "lookup 1050", "local_network", "dummy0", "32000"} {
-		if strings.Contains(got, not) {
-			t.Errorf("would delete foreign rule %q:\n%s", not, got)
+	dns := RuleSpec{Pref: PrefDNSUDP, Action: ActGoto, Goto: PrefLast, IPProto: 17, Dport: 53}
+	b := EncodeRule(dns)
+	// fib_rule_hdr: family AF_INET, action FR_ACT_GOTO at byte 7.
+	if b[0] != 2 || b[7] != 2 {
+		t.Fatalf("header % x", b[:12])
+	}
+	k := kernelDump(dns)
+	if k.IPProto != 17 || k.Dport == nil || k.Dport[0] != 53 || k.Dport[1] != 53 || k.Goto != PrefLast || k.Pref != PrefDNSUDP {
+		t.Errorf("dns rule parsed as %+v", k)
+	}
+	if got := dns.AddCmd().String(); got != "ip -4 rule add pref 10003 ipproto udp dport 53 goto 10099" {
+		t.Errorf("ip equivalent: %s", got)
+	}
+}
+
+func TestOwnedOnlyOurs(t *testing.T) {
+	ours := []RuleSpec{
+		{Pref: 10001, Action: ActTable, Table: 980, Mark: ProbeMark, Mask: ProbeMark},
+		{Pref: 10002, Action: ActTable, Table: 980, HasUID: true, UIDStart: 10682, UIDEnd: 10682},
+		{Pref: 10003, Action: ActGoto, Goto: 10099, IPProto: 17, Dport: 53},
+		{Pref: 10004, Action: ActGoto, Goto: 10099, IPProto: 6, Dport: 53},
+		{Pref: 10010, Action: ActTable, Table: 980, HasUID: true, UIDStart: 10000, UIDEnd: 10684},
+		{Pref: 10099, Action: ActNop},
+		{Pref: PrefSelftestGoto, Action: ActGoto, Goto: PrefSelftestNop, IPProto: 17, Dport: 53},
+		{Pref: PrefSelftestNop, Action: ActNop},
+	}
+	iif := func(b []byte) []byte { return appendAttr(b, fraIifname, []byte("lo\x00")) }
+	foreign := []KRule{
+		kernelDump(RuleSpec{Pref: 10000, Action: ActTable, Table: 99, Mark: 0xc0000, Mask: 0xd0000}),
+		kernelDump(RuleSpec{Pref: 10050, Action: ActTable, Table: 1050, HasUID: true, UIDStart: 10000, UIDEnd: 19999}),
+		kernelDump(RuleSpec{Pref: 10010, Action: ActTable, Table: 980, HasUID: true, UIDStart: 0, UIDEnd: 0}, iif),
+		kernelDump(RuleSpec{Pref: 10050, Action: ActNop}),               // nop elsewhere
+		kernelDump(RuleSpec{Pref: 10099, Action: ActNop, IPProto: 17}),  // nop with a selector
+		kernelDump(RuleSpec{Pref: 10020, Action: ActGoto, Goto: 10098}), // goto elsewhere
+		kernelDump(RuleSpec{Pref: 9999, Action: ActTable, Table: 980}),  // below our range
+		kernelDump(RuleSpec{Pref: 11000, Action: ActGoto, Goto: 10099}), // above our range
+		{Pref: 10099, Action: 6 /* unreachable */},
+	}
+	var all []KRule
+	for _, r := range ours {
+		all = append(all, kernelDump(r))
+	}
+	all = append(all, foreign...)
+	got := OwnedOrdered(all, 980)
+	if len(got) != len(ours) {
+		for _, k := range got {
+			t.Logf("owned: %s", k)
+		}
+		t.Fatalf("owned %d rules, want %d", len(got), len(ours))
+	}
+	for _, k := range foreign {
+		if Owned(k, 980) {
+			t.Errorf("would delete foreign rule %s", k)
 		}
 	}
-	if !strings.Contains(del[len(del)-1].String(), "nop") {
-		t.Errorf("nop target must go last:\n%s", got)
+	// Highest pref first, nop targets last.
+	for i := 1; i < len(got); i++ {
+		a, b := got[i-1], got[i]
+		if a.Action == ActNop && b.Action != ActNop || (a.Action == ActNop) == (b.Action == ActNop) && a.Pref < b.Pref {
+			t.Errorf("order: %s before %s", a, b)
+		}
+	}
+	if got[len(got)-1].Action != ActNop || got[len(got)-2].Action != ActNop {
+		t.Errorf("nop targets must go last")
+	}
+}
+
+func TestParseRejectsShortAndFlagsForeign(t *testing.T) {
+	if _, err := ParseRule([]byte{2, 0, 0}); err == nil {
+		t.Error("short header accepted")
+	}
+	b := EncodeRule(RuleSpec{Pref: 10002, Action: ActTable, Table: 980, HasUID: true, UIDStart: 1, UIDEnd: 2})
+	b[2] = 24 // src_len: "from 10.0.0.0/24"
+	if k, _ := ParseRule(b); !k.Foreign || Owned(k, 980) {
+		t.Error("rule with a source prefix must be foreign")
+	}
+	b = EncodeRule(RuleSpec{Pref: 10099, Action: ActNop})
+	ne.PutUint32(b[8:12], 0x2) // FIB_RULE_INVERT
+	if k, _ := ParseRule(b); !k.Foreign {
+		t.Error("inverted rule must be foreign")
+	}
+	b = EncodeRule(RuleSpec{Pref: 10003, Action: ActGoto, Goto: 10099, IPProto: 17, Dport: 53})
+	ne.PutUint32(b[8:12], fibRuleUnresolved)
+	if k, _ := ParseRule(b); k.Foreign || !Owned(k, 980) {
+		t.Error("unresolved goto is still ours")
 	}
 }
 

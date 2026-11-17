@@ -50,6 +50,13 @@ jobs:
         working-directory: tools/wghelper
         run: go vet ./... && go test ./...
 
+      - name: Root WireGuard helper netlink test (network namespace, real kernel)
+        working-directory: tools/wghelper
+        run: |
+          go build -o /tmp/wghelper-test .
+          sudo modprobe dummy || true
+          sudo WGHELPER_BIN=/tmp/wghelper-test ./netns-test.sh
+
       - name: Build Root WireGuard helper
         run: ./scripts/build-wghelper.sh
 

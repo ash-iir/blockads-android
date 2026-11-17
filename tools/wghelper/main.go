@@ -21,6 +21,9 @@
 // parent death, error, or (kill switch off) a dead tunnel, everything is
 // removed again. `down` removes leftovers idempotently.
 //
+// Links, addresses, routes and rules are set over rtnetlink (Android's
+// iproute2 ss171113 has no ipproto/dport); `ip` is only a fallback.
+//
 // Shipped in the APK as lib/<abi>/libblockadswg.so and started via su.
 package main
 
@@ -39,6 +42,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/vishvananda/netlink"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -49,7 +53,9 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `usage:
   %[1]s up -config FILE [-ready FILE] [-status FILE] [-ppid PID -pname NAME]
   %[1]s down [-interface bawg0] [-table 980]     remove everything (idempotent)
-  %[1]s plan -config FILE                         print the commands, change nothing
+  %[1]s plan -config FILE                         print the ip equivalents, change nothing
+  %[1]s rules [-table 980]                        list rules at prefs 10000-10099 (netlink)
+  %[1]s selftest                                  add+read+del a udp dport 53 goto rule (v4+v6)
 `, os.Args[0])
 	os.Exit(2)
 }
@@ -66,6 +72,12 @@ func main() {
 		cmdDown(os.Args[2:])
 	case "plan":
 		cmdPlan(os.Args[2:])
+	case "rules":
+		cmdRules(os.Args[2:])
+	case "selftest":
+		cmdSelftest(os.Args[2:])
+	case "apply":
+		cmdApply(os.Args[2:])
 	default:
 		usage()
 	}
@@ -79,23 +91,87 @@ func runIP(c Cmd) error {
 	return nil
 }
 
-func ipOut(args ...string) string {
-	out, _ := exec.Command(ipBin, args...).Output()
-	return string(out)
+// withFallback runs the netlink operation; when it fails, the `ip`
+// equivalent is tried (logged), and both errors are reported if that fails too.
+func withFallback(what Cmd, nlErr error) error {
+	if nlErr == nil {
+		return nil
+	}
+	if ipErr := runIP(what); ipErr != nil {
+		return fmt.Errorf("%s: netlink: %v; ip fallback: %v", what, nlErr, ipErr)
+	}
+	log.Printf("%s: netlink failed (%v), ip fallback ok", what, nlErr)
+	return nil
 }
 
-// cleanupAll removes every rule we own (found by scanning, so it also
-// catches leftovers of an older run), the table and the interface.
-func cleanupAll(table int, ifn string) {
-	for _, f := range []string{"-4", "-6"} {
-		for _, c := range OwnedRuleDeletes(f, ipOut(f, "rule", "show"), table) {
-			if err := runIP(c); err != nil {
-				log.Printf("cleanup: %v", err)
+func addRule(r RuleSpec) error {
+	err := nlRuleAdd(r)
+	if errors.Is(err, syscall.EEXIST) {
+		return nil // identical rule already there
+	}
+	return withFallback(r.AddCmd(), err)
+}
+
+func delRule(r RuleSpec) error {
+	err := nlRuleDel(r)
+	if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return withFallback(r.DelCmd(), err)
+}
+
+func addRoute(r RouteSpec) error { return withFallback(r.Cmd(), nlRouteReplace(r)) }
+
+func setupLink(p Plan) error {
+	if err := nlLinkSetup(p); err != nil {
+		log.Printf("link setup over netlink failed (%v), trying ip", err)
+		for _, c := range p.LinkCmds() {
+			if e := runIP(c); e != nil && !strings.Contains(e.Error(), "exists") {
+				return fmt.Errorf("netlink: %v; ip fallback: %v", err, e)
 			}
 		}
 	}
-	for _, c := range CleanupTail(table, ifn) {
-		_ = runIP(c) // missing table/interface is fine
+	return nil
+}
+
+// ownedRules lists the rules we own (both families) in delete order.
+func ownedRules(table int) ([]KRule, error) {
+	var out []KRule
+	var firstErr error
+	for _, v6 := range []bool{false, true} {
+		rs, err := nlRuleList(v6)
+		if err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("list %s rules: %w", fam(v6), err)
+		}
+		out = append(out, OwnedOrdered(rs, table)...)
+	}
+	return out, firstErr
+}
+
+// cleanupAll removes every rule we own (found by a netlink dump and matched
+// on pref AND attributes, so it also catches leftovers of an older run), the
+// table and the interface.
+func cleanupAll(table int, ifn string) {
+	owned, err := ownedRules(table)
+	if err != nil {
+		log.Printf("cleanup: %v", err)
+	}
+	for _, k := range owned {
+		if e := nlRuleDelRaw(k); e != nil && !errors.Is(e, syscall.ENOENT) {
+			log.Printf("cleanup: del %s: %v", k, e)
+		}
+	}
+	for i, v6 := range []bool{false, true} {
+		if e := nlRouteFlushTable(v6, table); e != nil {
+			log.Printf("cleanup: flush %s table %d over netlink: %v", fam(v6), table, e)
+			_ = runIP(CleanupTail(table, ifn)[i])
+		}
+	}
+	if _, e := net.InterfaceByName(ifn); e == nil {
+		if e := nlLinkDel(ifn); e != nil {
+			log.Printf("cleanup: del %s over netlink: %v", ifn, e)
+			_ = runIP(CleanupTail(table, ifn)[2])
+		}
 	}
 }
 
@@ -106,6 +182,154 @@ func cmdDown(args []string) {
 	fs.StringVar(&ipBin, "ip", ipBin, "ip binary")
 	_ = fs.Parse(args)
 	cleanupAll(*table, *ifn)
+	left, err := ownedRules(*table)
+	if err != nil || len(left) > 0 {
+		for _, k := range left {
+			log.Printf("down: still there: %s", k)
+		}
+		if err != nil {
+			log.Printf("down: %v", err)
+		}
+		os.Exit(1)
+	}
+}
+
+// cmdRules prints the rules in our pref range as the kernel has them
+// (Android's ip cannot print ipproto/dport).
+func cmdRules(args []string) {
+	fs := flag.NewFlagSet("rules", flag.ExitOnError)
+	table := fs.Int("table", DefaultTable, "routing table")
+	_ = fs.Parse(args)
+	rc := 0
+	for _, v6 := range []bool{false, true} {
+		rs, err := nlRuleList(v6)
+		if err != nil {
+			log.Printf("list %s: %v", fam(v6), err)
+			rc = 1
+		}
+		for _, k := range rs {
+			if k.Pref < PrefFirst || k.Pref > PrefLast {
+				continue
+			}
+			tag := "foreign"
+			if Owned(k, *table) {
+				tag = "ours"
+			}
+			fmt.Printf("%s  [%s]\n", k, tag)
+		}
+	}
+	os.Exit(rc)
+}
+
+// cmdSelftest checks on this kernel that a udp dport 53 goto rule can be
+// added over netlink, reads back with its attributes, and deletes exactly.
+// Uses prefs 10097 (goto) / 10098 (nop target), v4 and v6. Exit 0 = ok.
+func cmdSelftest(args []string) {
+	fs := flag.NewFlagSet("selftest", flag.ExitOnError)
+	_ = fs.Parse(args)
+	ok := true
+	for _, v6 := range []bool{false, true} {
+		nop := RuleSpec{V6: v6, Pref: PrefSelftestNop, Action: ActNop}
+		gt := RuleSpec{V6: v6, Pref: PrefSelftestGoto, Action: ActGoto, Goto: PrefSelftestNop, IPProto: 17, Dport: 53}
+		step := func(name string, err error) bool {
+			if err != nil {
+				fmt.Printf("FAIL %s %s: %v\n", fam(v6), name, err)
+				ok = false
+				return false
+			}
+			fmt.Printf("ok   %s %s\n", fam(v6), name)
+			return true
+		}
+		// Leftovers of an interrupted selftest (exact match only).
+		_ = nlRuleDel(gt)
+		_ = nlRuleDel(nop)
+		if !step("add "+nop.AddCmd().String(), nlRuleAdd(nop)) {
+			continue
+		}
+		if step("add "+gt.AddCmd().String(), nlRuleAdd(gt)) {
+			rs, err := nlRuleList(v6)
+			if step("list", err) {
+				var e error
+				if !FindRule(rs, gt) {
+					e = errors.New("goto rule not found with ipproto 17 dport 53-53 goto 10098")
+				}
+				step("read back attributes", e)
+			}
+			step("del goto (exact)", nlRuleDel(gt))
+		}
+		step("del nop (exact)", nlRuleDel(nop))
+		rs, err := nlRuleList(v6)
+		if step("list after", err) {
+			var e error
+			for _, k := range rs {
+				if k.Pref == PrefSelftestGoto || k.Pref == PrefSelftestNop {
+					e = fmt.Errorf("left over: %s", k)
+				}
+			}
+			step("nothing left at 10097/10098", e)
+		}
+	}
+	if !ok {
+		fmt.Println("selftest FAILED")
+		os.Exit(1)
+	}
+	fmt.Println("selftest OK")
+}
+
+// cmdApply (tests only): applies the plan's addresses, routes and rules to
+// an existing interface, without WireGuard and without waiting for a
+// handshake, and leaves them in place (`down` removes them).
+func cmdApply(args []string) {
+	fs := flag.NewFlagSet("apply", flag.ExitOnError)
+	cfgPath := fs.String("config", "", "config json")
+	fs.StringVar(&ipBin, "ip", ipBin, "ip binary")
+	_ = fs.Parse(args)
+	c, err := LoadConfig(*cfgPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	p := BuildPlan(c)
+	cleanupAll(c.Table, "") // rules + table only; the test owns the interface
+	if _, err := net.InterfaceByName(c.Interface); err != nil {
+		// No ip binary needed: a dummy stands in for the WireGuard interface.
+		la := netlink.LinkAttrs{Name: c.Interface}
+		var errs []error
+		for _, l := range []netlink.Link{&netlink.Dummy{LinkAttrs: la}, &netlink.Wireguard{LinkAttrs: la},
+			&netlink.Veth{LinkAttrs: la, PeerName: c.Interface + "p"}} {
+			err := netlink.LinkAdd(l)
+			if err == nil {
+				log.Printf("created %s as %s", c.Interface, l.Type())
+				errs = nil
+				break
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", l.Type(), err))
+		}
+		if errs != nil {
+			log.Fatalf("create %s: %v", c.Interface, errors.Join(errs...))
+		}
+	}
+	if err := setupLink(p); err != nil {
+		log.Fatalf("%v", err)
+	}
+	for _, r := range p.Routes {
+		if err := addRoute(r); err != nil {
+			log.Fatalf("%v", err)
+		}
+	}
+	for _, r := range append(append([]RuleSpec(nil), p.Probe...), p.Rules...) {
+		if err := addRule(r); err != nil {
+			log.Fatalf("%v", err)
+		}
+	}
+	rs4, _ := nlRuleList(false)
+	rs6, _ := nlRuleList(true)
+	all := append(rs4, rs6...)
+	for _, r := range append(append([]RuleSpec(nil), p.Probe...), p.Rules...) {
+		if !FindRule(all, r) {
+			log.Fatalf("not found after add: %s", r.AddCmd())
+		}
+	}
+	fmt.Println("apply ok")
 }
 
 func cmdPlan(args []string) {
@@ -117,18 +341,22 @@ func cmdPlan(args []string) {
 		log.Fatalf("config: %v", err)
 	}
 	p := BuildPlan(c)
+	fmt.Println("# applied over netlink; ip equivalents:")
 	fmt.Printf("ip link add dev %s type wireguard\n# wgctrl: key, listen port %d, fwmark 0x%x, %d peer(s)\n", c.Interface, c.ListenPort, c.FwMark, len(c.Peers))
-	for _, group := range [][]Cmd{p.Link, p.Routes, p.Probe} {
+	for _, group := range [][]Cmd{p.LinkCmds(), RouteCmds(p.Routes), RuleAddCmds(p.Probe)} {
 		for _, x := range group {
 			fmt.Println(x)
 		}
 	}
 	fmt.Println("# wait for handshake, then:")
-	for _, x := range p.Rules {
+	for _, x := range RuleAddCmds(p.Rules) {
 		fmt.Println(x)
 	}
 	fmt.Println("# teardown:")
-	for _, x := range p.Teardown(c) {
+	for _, r := range p.TeardownRules() {
+		fmt.Println(r.DelCmd())
+	}
+	for _, x := range CleanupTail(c.Table, c.Interface) {
 		fmt.Println(x)
 	}
 }
@@ -145,8 +373,10 @@ func (s *upState) cleanup() {
 		if s.ready != "" {
 			_ = os.Remove(s.ready)
 		}
-		for _, c := range s.plan.Teardown(s.cfg) {
-			_ = runIP(c)
+		for _, r := range s.plan.TeardownRules() {
+			if err := delRule(r); err != nil {
+				log.Printf("teardown: %v", err)
+			}
 		}
 		// Catch anything a partial setup left behind.
 		cleanupAll(s.cfg.Table, s.cfg.Interface)
@@ -186,7 +416,7 @@ func cmdUp(args []string) {
 	// Leftovers of a crashed run (rules without an interface) go first.
 	cleanupAll(cfg.Table, cfg.Interface)
 
-	if err := runIP(ipcmd(fmt.Sprintf("link add dev %s type wireguard", cfg.Interface))); err != nil {
+	if err := withFallback(ipcmd(fmt.Sprintf("link add dev %s type wireguard", cfg.Interface)), nlLinkAddWireguard(cfg.Interface)); err != nil {
 		s.fatal("%v", err)
 	}
 	wg, err := wgctrl.New()
@@ -197,11 +427,17 @@ func cmdUp(args []string) {
 	if err := configureDevice(wg, cfg); err != nil {
 		s.fatal("configure %s: %v", cfg.Interface, err)
 	}
-	for _, group := range [][]Cmd{s.plan.Link, s.plan.Routes, s.plan.Probe} {
-		for _, c := range group {
-			if err := runIP(c); err != nil {
-				s.fatal("%v", err)
-			}
+	if err := setupLink(s.plan); err != nil {
+		s.fatal("%v", err)
+	}
+	for _, r := range s.plan.Routes {
+		if err := addRoute(r); err != nil {
+			s.fatal("%v", err)
+		}
+	}
+	for _, r := range s.plan.Probe {
+		if err := addRule(r); err != nil {
+			s.fatal("%v", err)
 		}
 	}
 	// Loose reverse-path filter on the tunnel: replies from the internet arrive
@@ -213,8 +449,8 @@ func cmdUp(args []string) {
 			s.fatal("%v", err)
 		}
 	}
-	for _, c := range s.plan.Rules {
-		if err := runIP(c); err != nil {
+	for _, r := range s.plan.Rules {
+		if err := addRule(r); err != nil {
 			s.fatal("%v", err)
 		}
 	}

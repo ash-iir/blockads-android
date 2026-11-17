@@ -143,6 +143,19 @@ class RootWireGuardTest {
     }
 
     @Test
+    fun `cleanup runs the helper's netlink down first`() {
+        val withPath = RootWireGuard.cleanupCommands("/data/app/x/app.pwhs.blockads-y/lib/arm64/libblockadswg.so")
+        assertEquals("'/data/app/x/app.pwhs.blockads-y/lib/arm64/libblockadswg.so' down 2>/dev/null", withPath.first())
+        val noPath = RootWireGuard.cleanupCommands(null)
+        assertTrue(noPath.first().contains("/data/app/*/app.pwhs.blockads-*/lib/*/libblockadswg.so"))
+        assertTrue(noPath.first().contains("\"\$b\" down"))
+        // The ip fallback never uses keywords old iproute2 (ss171113) rejects.
+        val ipLines = noPath.drop(1).joinToString("\n")
+        assertFalse(ipLines.contains("ipproto"))
+        assertFalse(ipLines.contains("dport"))
+    }
+
+    @Test
     fun `teardown stops the helper first and is part of the iptables teardown`() {
         val teardown = RootWireGuard.teardownCommands()
         assertEquals("pkill -f libblockadswg.so 2>/dev/null", teardown.first())
