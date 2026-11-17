@@ -285,13 +285,16 @@ object RootWireGuard {
         shell.exec(
             startCommand(bin.absolutePath, cfg.absolutePath, ready, status, log, android.os.Process.myPid(), context.packageName)
         )
-        val deadline = System.currentTimeMillis() + READY_WAIT_MS
+        val startedAt = System.currentTimeMillis()
+        val deadline = startedAt + READY_WAIT_MS
         while (System.currentTimeMillis() < deadline) {
             if (shell.exec("test -f '$ready' && echo yes").out.any { it.trim() == "yes" }) {
                 Timber.d("Root WireGuard up ('${session.profileName}', $IFACE, table $ROUTE_TABLE)")
                 return true
             }
-            if (!isHelperRunning()) break
+            // The helper exits by itself on a bad config or no handshake; give
+            // the backgrounded start a moment before treating "gone" as failed.
+            if (System.currentTimeMillis() - startedAt > 2000L && !isHelperRunning()) break
             Thread.sleep(200)
         }
         Timber.e("Root WireGuard did not come up: ${shell.exec("tail -5 '$log'").out.joinToString(" | ")}")
