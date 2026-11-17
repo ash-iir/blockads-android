@@ -60,6 +60,16 @@ class RootProxyService : Service() {
         const val ACTION_PAUSE_1H = "app.pwhs.blockads.ROOT_PAUSE_1H"
         const val EXTRA_STARTED_FROM_BOOT = "extra_started_from_boot"
 
+        /**
+         * Sets the Root WireGuard prefs and restarts a running proxy so they apply.
+         * The service is not exported: only BlockAds itself or root can send it
+         * (`am startservice -n app.pwhs.blockads/.service.RootProxyService
+         *  -a app.pwhs.blockads.ROOT_WG_SET --ez enabled true [--ez kill_switch false]`).
+         */
+        const val ACTION_SET_ROOT_WG = "app.pwhs.blockads.ROOT_WG_SET"
+        const val EXTRA_ROOT_WG_ENABLED = "enabled"
+        const val EXTRA_ROOT_WG_KILL_SWITCH = "kill_switch"
+
         private val _state = kotlinx.coroutines.flow.MutableStateFlow(VpnState.STOPPED)
         val state: kotlinx.coroutines.flow.StateFlow<VpnState> = _state.asStateFlow()
 
@@ -200,6 +210,10 @@ class RootProxyService : Service() {
             ACTION_RESTART -> {
                 restartProxy()
                 return START_STICKY
+            }
+            ACTION_SET_ROOT_WG -> {
+                setRootWireGuard(intent)
+                return START_NOT_STICKY
             }
             else -> {
                 startProxy(startedFromBoot)
@@ -507,6 +521,23 @@ class RootProxyService : Service() {
         } catch (e: Exception) {
             Timber.w(e, "Failed to refresh IPv6 DNS redirect")
             runCatching { Ipv6DnsRedirect.stop() }
+        }
+    }
+
+    private fun setRootWireGuard(intent: Intent) {
+        val enabled = intent.getBooleanExtra(EXTRA_ROOT_WG_ENABLED, false)
+        val killSwitch = if (intent.hasExtra(EXTRA_ROOT_WG_KILL_SWITCH)) {
+            intent.getBooleanExtra(EXTRA_ROOT_WG_KILL_SWITCH, false)
+        } else null
+        serviceScope.launch {
+            appPrefs.wireguard.setRootWireGuardEnabled(enabled)
+            killSwitch?.let { appPrefs.wireguard.setRootWireGuardKillSwitch(it) }
+            Timber.d("Root WireGuard set: enabled=$enabled killSwitch=$killSwitch")
+            when (_state.value) {
+                VpnState.RUNNING, VpnState.STARTING -> restartProxy()
+                VpnState.STOPPED -> stopSelf()
+                else -> Unit
+            }
         }
     }
 

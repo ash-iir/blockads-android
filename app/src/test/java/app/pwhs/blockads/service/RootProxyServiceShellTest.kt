@@ -8,6 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import app.pwhs.blockads.data.dao.DnsLogDao
 import app.pwhs.blockads.data.dao.FirewallRuleDao
 import app.pwhs.blockads.data.datastore.AppPreferences
+import app.pwhs.blockads.data.datastore.prefs.WireGuardPreferences
 import app.pwhs.blockads.data.entities.DnsProtocol
 import app.pwhs.blockads.data.repository.FilterListRepository
 import app.pwhs.blockads.testutil.FakeRootShell
@@ -18,6 +19,7 @@ import app.pwhs.blockads.testutil.awaitTrue
 import app.pwhs.blockads.utils.LibsuRootShell
 import com.topjohnwu.superuser.Shell
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
@@ -55,6 +57,13 @@ class RootProxyServiceShellTest {
         if (cmd.startsWith("iptables -t nat -L OUTPUT")) FakeResult(out = listOf("BLOCKADS_DNS")) else FakeResult()
     })
     private var whitelist = emptySet<String>()
+    private var rootWgEnabled = false
+    private val wgPrefs: WireGuardPreferences = mockk(relaxed = true) {
+        every { rootWireGuardEnabled } answers { flowOf(rootWgEnabled) }
+        every { rootWireGuardKillSwitch } returns flowOf(false)
+        every { excludeLan } returns flowOf(true)
+        coEvery { getActiveWgProfileSnapshot() } returns null
+    }
     private val prefs: AppPreferences = mockk(relaxed = true) {
         every { recordDnsLogs } returns emptyFlow()
         every { dnsProtocol } returns flowOf(DnsProtocol.PLAIN)
@@ -68,6 +77,7 @@ class RootProxyServiceShellTest {
         every { firewallEnabled } returns flowOf(false)
         every { httpsFilteringEnabled } returns flowOf(false)
         coEvery { getWhitelistedAppsSnapshot() } answers { whitelist }
+        every { wireguard } answers { wgPrefs }
     }
     private val filterRepo: FilterListRepository = mockk(relaxed = true) {
         coEvery { loadAllEnabledFilters() } returns Result.success(10)
@@ -185,5 +195,32 @@ class RootProxyServiceShellTest {
             shell.batches.drop(before).none { it == IptablesManager.teardownCommands() }
         )
         assertEquals(VpnState.RUNNING, RootProxyService.state.value)
+    }
+
+    @Test
+    fun `root WireGuard stays off by default`() {
+        startRunning()
+        assertTrue(shell.commands.none { it.contains("libblockadswg.so' up") })
+    }
+
+    @Test
+    fun `root WireGuard enabled without a profile installs nothing`() {
+        rootWgEnabled = true
+        startRunning()
+        Thread.sleep(300)
+        assertTrue(shell.commands.none { it.contains("libblockadswg.so' up") })
+        assertTrue(shell.commands.none { it.contains("rule add") && it.contains("lookup 980") })
+    }
+
+    @Test
+    fun `ROOT_WG_SET stores the root WireGuard prefs`() {
+        controller.withIntent(
+            Intent(app, RootProxyService::class.java)
+                .setAction(RootProxyService.ACTION_SET_ROOT_WG)
+                .putExtra(RootProxyService.EXTRA_ROOT_WG_ENABLED, true)
+                .putExtra(RootProxyService.EXTRA_ROOT_WG_KILL_SWITCH, false)
+        ).startCommand(0, 1)
+        coVerify(timeout = 3_000) { wgPrefs.setRootWireGuardEnabled(true) }
+        coVerify(timeout = 3_000) { wgPrefs.setRootWireGuardKillSwitch(false) }
     }
 }
