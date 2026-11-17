@@ -1,0 +1,34 @@
+name: Hark publish debug APK
+# Copies the APKs of a finished Build Debug APK run (id in publish-run-id.txt)
+# to a public prerelease, so the phone can download them over the Hark bridge.
+on:
+  push:
+    branches: [hark/device-tools]
+    paths: [publish-run-id.txt]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read run id
+        id: rid
+        run: echo "id=$(cat publish-run-id.txt)" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.rid.outputs.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          find apk -name '*.apk' -exec ls -la {} \;
+          find apk -name '*.apk' -exec sha256sum {} \;
+          tag="hark-debug-${{ steps.rid.outputs.id }}"
+          gh release create "$tag" --prerelease --target hark/device-tools \
+            --title "Hark debug build (run ${{ steps.rid.outputs.id }})" \
+            --notes "Debug APK copied from Actions run ${{ steps.rid.outputs.id }} for device testing." \
+            $(find apk -name '*.apk')
