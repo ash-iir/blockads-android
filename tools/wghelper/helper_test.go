@@ -302,6 +302,16 @@ func TestParseRejectsShortAndFlagsForeign(t *testing.T) {
 	if k, _ := ParseRule(b); !k.Foreign || Owned(k, 980) {
 		t.Error("rule with a source prefix must be foreign")
 	}
+	// Linux 6.16+ dumps FRA_DPORT_MASK 0xffff for a plain port: still ours.
+	dns := RuleSpec{Pref: 10003, Action: ActGoto, Goto: 10099, IPProto: 17, Dport: 53}
+	full := func(b []byte) []byte { return appendAttr(b, fraDportMask, []byte{0xff, 0xff}) }
+	if k := kernelDump(dns, full); k.Foreign || !Owned(k, 980) || !FindRule([]KRule{k}, dns) {
+		t.Errorf("dport mask 0xffff must not make the rule foreign: %s", k)
+	}
+	part := func(b []byte) []byte { return appendAttr(b, fraDportMask, []byte{0xf0, 0xff}) }
+	if k := kernelDump(dns, part); !k.Foreign || Owned(k, 980) {
+		t.Error("a partial dport mask is not ours")
+	}
 	b = EncodeRule(RuleSpec{Pref: 10099, Action: ActNop})
 	ne.PutUint32(b[8:12], 0x2) // FIB_RULE_INVERT
 	if k, _ := ParseRule(b); !k.Foreign {

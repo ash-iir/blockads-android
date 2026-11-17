@@ -39,6 +39,8 @@ const (
 	fraIPProto           = 22
 	fraSportRange        = 23
 	fraDportRange        = 24
+	fraSportMask         = 28 // Linux 6.16+
+	fraDportMask         = 29 // 6.16+: dumped as 0xffff for a plain port range
 
 	fibRuleUnresolved = 0x4
 	fibRuleHdrLen     = 12
@@ -64,6 +66,8 @@ type KRule struct {
 	Foreign bool
 	// Raw fib_rule_hdr + attributes, echoed back for an exact delete.
 	Raw []byte
+	// Attribute types seen (diagnostics).
+	Attrs []uint16
 }
 
 func (r KRule) String() string {
@@ -159,6 +163,7 @@ func ParseRule(m []byte) (KRule, error) {
 			return r, errors.New("bad attribute length")
 		}
 		d := a[4:l]
+		r.Attrs = append(r.Attrs, typ)
 		need := func(n int) bool {
 			if len(d) < n {
 				r.Foreign = true
@@ -203,6 +208,11 @@ func ParseRule(m []byte) (KRule, error) {
 		case fraSuppressPrefixlen, fraSuppressIfgroup:
 			// Dumped always; -1 means unset.
 			if need(4) && ne.Uint32(d) != 0xffffffff {
+				r.Foreign = true
+			}
+		case fraDportMask, fraSportMask:
+			// A full mask is what the kernel stores for a plain port (range).
+			if need(2) && ne.Uint16(d) != 0xffff {
 				r.Foreign = true
 			}
 		case fraProtocol, fraPad:

@@ -252,6 +252,11 @@ func cmdSelftest(args []string) {
 				var e error
 				if !FindRule(rs, gt) {
 					e = errors.New("goto rule not found with ipproto 17 dport 53-53 goto 10098")
+					for _, k := range rs {
+						if k.Pref == PrefSelftestGoto || k.Pref == PrefSelftestNop {
+							fmt.Printf("     kernel has: %s attrs=%v hdr=% x\n", k, k.Attrs, k.Raw[:fibRuleHdrLen])
+						}
+					}
 				}
 				step("read back attributes", e)
 			}
