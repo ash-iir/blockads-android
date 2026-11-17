@@ -63,8 +63,25 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew -Ptunnel.source=local :app:assembleFdroidDebug
+      - name: Build Debug + Optimized APKs
+        # optimized = release code (R8 + resource shrinking, not debuggable) signed
+        # with the same debug key, so it installs over the debug build in place.
+        run: ./gradlew -Ptunnel.source=local :app:assembleFdroidDebug :app:assembleFdroidOptimized
+
+      - name: Check optimized APK (signer, native helpers, size)
+        run: |
+          set -euo pipefail
+          signer=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)apksigner
+          dbg=$(ls app/build/outputs/apk/fdroid/debug/*arm64-v8a*.apk)
+          opt=$(ls app/build/outputs/apk/fdroid/optimized/*arm64-v8a*.apk)
+          d=$("$signer" verify --print-certs "$dbg" | grep 'SHA-256 digest')
+          o=$("$signer" verify --print-certs "$opt" | grep 'SHA-256 digest')
+          echo "debug     $d"; echo "optimized $o"
+          [ "$d" = "$o" ] || { echo "::error::optimized APK signer differs from debug"; exit 1; }
+          for lib in libblockadswg.so libblockadsdns6.so libgojni.so; do
+            unzip -l "$opt" | grep -q "lib/arm64-v8a/$lib" || { echo "::error::$lib missing"; exit 1; }
+          done
+          ls -l "$dbg" "$opt"; sha256sum "$dbg" "$opt"
 
       - name: Root Proxy unit tests
         run: ./gradlew -Ptunnel.source=prebuilt :app:testFdroidDebugUnitTest --tests '*Ipv6DnsRedirectTest' --tests '*IptablesManager*' --tests '*RootProxy*' --tests '*RootWireGuard*'
@@ -74,4 +91,11 @@ jobs:
         with:
           name: BlockAds-Root-Transparent-Debug
           path: app/build/outputs/apk/fdroid/debug/*.apk
+          retention-days: 14
+
+      - name: Upload Optimized APK (arm64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlockAds-Root-Transparent-Optimized-arm64
+          path: app/build/outputs/apk/fdroid/optimized/*arm64-v8a*.apk
           retention-days: 14

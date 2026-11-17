@@ -117,6 +117,17 @@ android {
         debug {
             // Debug build shares standard applicationId for unified testing and deployment
         }
+        // Release code (R8 minify + resource shrinking, not debuggable) signed with
+        // the debug key, so it installs over the debug builds already on a test
+        // phone with `pm install -r` (same applicationId, same signer, data kept).
+        // Build: ./gradlew :app:assembleFdroidOptimized
+        create("optimized") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
+            isJniDebuggable = false
+            matchingFallbacks += listOf("release")
+        }
     }
 
     compileOptions {
