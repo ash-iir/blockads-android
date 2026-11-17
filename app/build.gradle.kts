@@ -185,6 +185,10 @@ android {
 
     packaging {
         jniLibs {
+            // Extract native libs on install: the IPv6 DNS root helper
+            // (libblockadsdns6.so, an executable) must exist as a file in
+            // nativeLibraryDir to be started through su.
+            useLegacyPackaging = true
             // Disable stripping native libraries to ensure byte-for-byte reproducible builds
             // across different CI environments (F-Droid vs GitHub Actions).
             keepDebugSymbols.add("**/libdatastore_shared_counter.so")

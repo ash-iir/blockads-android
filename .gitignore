@@ -48,3 +48,5 @@ adguard
 .playwright-mcp/
 .vscode/
 android-re-workspace/
+app/src/main/jniLibs/*/libblockadsdns6.so
+

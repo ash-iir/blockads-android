@@ -302,9 +302,9 @@ class RootProxyService : Service() {
 
                 retryManager.reset()
 
-                // Close the IPv6 DNS leak on kernels without ip6tables nat.
+                // Redirect IPv6 DNS too on kernels without ip6tables nat.
                 ipv6NatRedirect = IptablesManager.hasIpv6DnsRedirect()
-                refreshIpv6DnsGuard(force = true)
+                refreshIpv6DnsRedirect()
 
                 // Start the background /proc/net/udp snapshotter. The
                 // engine's AppResolver reads from this snapshot instead
@@ -417,8 +417,8 @@ class RootProxyService : Service() {
      * Watchdog, every 10 seconds:
      *  1. re-applies the iptables rules if something flushed them (with the
      *     session's full HTTPS-filtering parameters, not the defaults);
-     *  2. keeps the IPv6 DNS leak guard in sync with the current network
-     *     (Wi-Fi <-> mobile changes which DNS servers exist);
+     *  2. keeps the IPv6 DNS redirect (TPROXY helper) alive, or removed if
+     *     the helper cannot run;
      *  3. probes the local DNS engine with a real query. If it stops answering
      *     while a network is up, IPv4 DNS is dead behind the redirect and the
      *     resolver drifts to unfiltered paths, so the proxy is restarted.
@@ -442,10 +442,8 @@ class RootProxyService : Service() {
                         browserUids = activeBrowserUids
                     )
                     ipv6NatRedirect = IptablesManager.hasIpv6DnsRedirect()
-                    refreshIpv6DnsGuard(force = true)
-                } else {
-                    refreshIpv6DnsGuard(force = false)
                 }
+                refreshIpv6DnsRedirect()
 
                 // Probe every 3rd tick (~30s) to keep it cheap.
                 if (tick % 3 == 0) {
@@ -470,20 +468,21 @@ class RootProxyService : Service() {
     }
 
     /**
-     * Apply/remove the IPv6 DNS leak guard. Not needed when ip6tables nat
-     * already redirects IPv6 DNS. Unknown network state leaves it unchanged.
+     * Keeps IPv6 DNS going through BlockAds on kernels without ip6tables nat
+     * (TPROXY root helper, see [Ipv6DnsRedirect]). Not needed when the nat
+     * REDIRECT for IPv6 exists. If the helper cannot run, IPv6 DNS stays
+     * unfiltered but working — never blocked.
      */
-    private fun refreshIpv6DnsGuard(force: Boolean) {
+    private fun refreshIpv6DnsRedirect() {
         try {
-            val uid = applicationInfo.uid
             if (ipv6NatRedirect) {
-                IptablesManager.syncIpv6DnsGuard(uid, whitelistedUids, enable = false, force = force)
+                Ipv6DnsRedirect.stop()
                 return
             }
-            val hasV4Dns = DnsNetworkInspector.activeNetworkHasIpv4Dns(this) ?: return
-            IptablesManager.syncIpv6DnsGuard(uid, whitelistedUids, enable = hasV4Dns, force = force)
+            Ipv6DnsRedirect.ensure(this, applicationInfo.uid, whitelistedUids)
         } catch (e: Exception) {
-            Timber.w(e, "Failed to refresh IPv6 DNS guard")
+            Timber.w(e, "Failed to refresh IPv6 DNS redirect")
+            runCatching { Ipv6DnsRedirect.stop() }
         }
     }
 

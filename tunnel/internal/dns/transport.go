@@ -93,14 +93,11 @@ func (r *Resolver) queryDoT(rawQuery []byte, server string) ([]byte, error) {
 
 	targetIP := host
 	if net.ParseIP(host) == nil {
-		targetIP = resolveBootstrapIP(host, r)
-		if targetIP == "" {
-			ips, err := net.LookupHost(host)
-			if err != nil || len(ips) == 0 {
-				return nil, fmt.Errorf("DoT resolve %s: %w", host, err)
-			}
-			targetIP = ips[0]
+		ip, err := r.bootstrapLookup(host)
+		if err != nil {
+			return nil, fmt.Errorf("DoT resolve %s: %w", host, err)
 		}
+		targetIP = ip
 	}
 
 	var conn net.Conn
@@ -217,14 +214,11 @@ func (r *Resolver) getOrCreateQUICConn(host, port string) (*quic.Conn, error) {
 
 	targetIP := host
 	if net.ParseIP(host) == nil {
-		targetIP = resolveBootstrapIP(host, r)
-		if targetIP == "" {
-			ips, err := net.LookupHost(host)
-			if err != nil || len(ips) == 0 {
-				return nil, fmt.Errorf("DoQ resolve %s: %w", host, err)
-			}
-			targetIP = ips[0]
+		ip, err := r.bootstrapLookup(host)
+		if err != nil {
+			return nil, fmt.Errorf("DoQ resolve %s: %w", host, err)
 		}
+		targetIP = ip
 	}
 
 	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(targetIP, port))
@@ -318,8 +312,9 @@ func (d *protectedDialer) DialContext(ctx context.Context, network, addr string)
 	host, port, err := net.SplitHostPort(addr)
 	if err == nil {
 		if net.ParseIP(host) == nil {
-			targetIP := resolveBootstrapIP(host, d.resolver)
-			if targetIP != "" {
+			// Never via the system resolver: in Root Proxy mode that lookup
+			// loops back into this engine (see bootstrap.go).
+			if targetIP, lerr := d.resolver.bootstrapLookup(host); lerr == nil && targetIP != "" {
 				targetAddr = net.JoinHostPort(targetIP, port)
 			}
 		}
@@ -330,8 +325,8 @@ func (d *protectedDialer) DialContext(ctx context.Context, network, addr string)
 				if portNum, convErr := strconv.Atoi(targetPort); convErr == nil && portNum > 0 {
 					ip := net.ParseIP(targetHost)
 					if ip == nil {
-						if ips, lookupErr := net.DefaultResolver.LookupIP(ctx, "ip4", targetHost); lookupErr == nil && len(ips) > 0 {
-							ip = ips[0]
+						if s, lookupErr := d.resolver.bootstrapLookup(targetHost); lookupErr == nil {
+							ip = net.ParseIP(s)
 						}
 					}
 					if ip != nil {

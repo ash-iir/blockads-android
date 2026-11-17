@@ -122,14 +122,11 @@ func NewResolver(protectFn func(fd int) bool) *Resolver {
 			}
 			targetIP := host
 			if net.ParseIP(host) == nil {
-				targetIP = resolveBootstrapIP(host, r)
-				if targetIP == "" {
-					ips, err := net.LookupHost(host)
-					if err != nil || len(ips) == 0 {
-						return nil, fmt.Errorf("DoH3 resolve %s: %w", host, err)
-					}
-					targetIP = ips[0]
+				ip, err := r.bootstrapLookup(host)
+				if err != nil {
+					return nil, fmt.Errorf("DoH3 resolve %s: %w", host, err)
 				}
+				targetIP = ip
 			}
 			udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(targetIP, port))
 			if err != nil {

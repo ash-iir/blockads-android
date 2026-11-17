@@ -25,7 +25,7 @@ object IptablesManager {
     private const val CHAIN_HTTP = "BLOCKADS_HTTP"
     private const val CHAIN_HTTP_V6 = "BLOCKADS_HTTP6"
     private const val CHAIN_QUIC = "BLOCKADS_QUIC"
-    // IPv6 DNS leak guard for kernels without ip6tables nat (see syncIpv6DnsGuard).
+    // Removed REJECT guard of build 106635b; still torn down so upgrades clean it up.
     private const val CHAIN_DNS6_GUARD = "BLOCKADS_DNS6"
     private const val LOCAL_DNS_PORT = 15353
     private const val LOCAL_HTTP_PORT = 15354
@@ -155,7 +155,6 @@ object IptablesManager {
     fun teardownRules(): Boolean {
         val commands = teardownCommands()
         shell.exec(*commands.toTypedArray())
-        ipv6GuardEnabled = null
         Timber.d("iptables teardown done, Private DNS restored")
         return true
     }
@@ -295,13 +294,13 @@ object IptablesManager {
         "ip6tables -t filter -D OUTPUT -j $CHAIN_FILTER 2>/dev/null",
         "ip6tables -t filter -F $CHAIN_FILTER 2>/dev/null",
         "ip6tables -t filter -X $CHAIN_FILTER 2>/dev/null",
-        // IPv6 DNS leak guard (no-nat kernels)
+        // Old IPv6 REJECT guard (build 106635b), replaced by Ipv6DnsRedirect
         "ip6tables -t filter -D OUTPUT -j $CHAIN_DNS6_GUARD 2>/dev/null",
         "ip6tables -t filter -F $CHAIN_DNS6_GUARD 2>/dev/null",
         "ip6tables -t filter -X $CHAIN_DNS6_GUARD 2>/dev/null",
         // Restore Android Private DNS to automatic mode
         "settings put global private_dns_mode opportunistic",
-    )
+    ) + Ipv6DnsRedirect.teardownCommands()
 
     /**
      * True when the kernel accepted the IPv6 nat REDIRECT for port 53, i.e. IPv6
@@ -310,59 +309,6 @@ object IptablesManager {
     fun hasIpv6DnsRedirect(): Boolean {
         val result = shell.exec("ip6tables -t nat -S $CHAIN 2>/dev/null | grep -q 'dport 53' && echo yes")
         return result.out.any { it.trim() == "yes" }
-    }
-
-    /** Last guard state applied, so the watchdog only touches iptables on change. */
-    @Volatile
-    private var ipv6GuardEnabled: Boolean? = null
-
-    /**
-     * IPv6 DNS leak guard for kernels without ip6tables nat (e.g. OnePlus/ColorOS,
-     * many GKI builds).
-     *
-     * Without a v6 REDIRECT, queries the system resolver (and Chrome's built-in
-     * resolver) send to the carrier's IPv6 DNS servers go straight out unfiltered.
-     * Android's resolver scores servers by latency/success; once the redirected
-     * IPv4 path has a few slow answers or timeouts, the IPv6 server wins the
-     * score and from then on most lookups bypass BlockAds — ads come back in
-     * Chrome until the app is restarted and the resolver stats reset.
-     *
-     * When the active network also has an IPv4 DNS server, rejecting IPv6 port 53
-     * (ICMP port-unreachable / TCP reset) makes the resolver fail over to IPv4
-     * instantly, which IS redirected. On IPv6-only-DNS networks the guard stays
-     * off so DNS keeps working (the pre-existing behaviour from bcef499).
-     *
-     * @param enable true to reject IPv6 DNS for every app except BlockAds and
-     *        whitelisted apps; false to remove the guard.
-     */
-    fun syncIpv6DnsGuard(uid: Int, whitelistUids: Collection<Int>, enable: Boolean, force: Boolean = false) {
-        if (!force && ipv6GuardEnabled == enable) return
-        val cmds = ipv6DnsGuardCommands(uid, whitelistUids, enable)
-        for (cmd in cmds) {
-            val r = shell.exec(cmd)
-            if (!r.isSuccess) Timber.w("IPv6 DNS guard cmd failed: [$cmd] err=${r.err}")
-        }
-        ipv6GuardEnabled = enable
-        Timber.d("IPv6 DNS leak guard ${if (enable) "ENABLED" else "disabled"}")
-    }
-
-    internal fun ipv6DnsGuardCommands(uid: Int, whitelistUids: Collection<Int>, enable: Boolean): List<String> = buildList {
-        add("ip6tables -t filter -N $CHAIN_DNS6_GUARD 2>/dev/null || true")
-        add("ip6tables -t filter -F $CHAIN_DNS6_GUARD")
-        add("ip6tables -t filter -C OUTPUT -j $CHAIN_DNS6_GUARD 2>/dev/null || ip6tables -t filter -I OUTPUT -j $CHAIN_DNS6_GUARD")
-        if (enable) {
-            add("ip6tables -t filter -A $CHAIN_DNS6_GUARD -m owner --uid-owner $uid -j RETURN")
-            for (wUid in whitelistUids) {
-                add("ip6tables -t filter -A $CHAIN_DNS6_GUARD -m owner --uid-owner $wUid -j RETURN")
-            }
-            add("ip6tables -t filter -A $CHAIN_DNS6_GUARD -p udp --dport 53 -j REJECT --reject-with icmp6-port-unreachable")
-            add("ip6tables -t filter -A $CHAIN_DNS6_GUARD -p tcp --dport 53 -j REJECT --reject-with tcp-reset")
-        }
-    }
-
-    /** Forget the cached guard state (rules were torn down). */
-    internal fun resetIpv6GuardState() {
-        ipv6GuardEnabled = null
     }
 
     /**
