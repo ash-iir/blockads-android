@@ -329,9 +329,14 @@ class GoTunnelAdapter(
                 val uids = browsers.mapNotNull { pkg ->
                     runCatching { pm.getPackageUid(pkg, 0) }.getOrNull()
                 }.joinToString(",")
+                val strictUids = browsers.filter { TunnelRuleLoader.isStrictBrowser(it) }.mapNotNull { pkg ->
+                    runCatching { pm.getPackageUid(pkg, 0) }.getOrNull()
+                }.joinToString(",")
 
                 engine.startStackMitm(certDir)
                 engine.setMitmAllowedUIDs(uids)
+                // Browsers never auto-bypassed; other apps (YouTube…) are on handshake failure.
+                engine.setMitmNoAutoBypassUIDs(strictUids)
                 engine.setFilterHttp3(filterHttp3)
 
                 TunnelRuleLoader.loadExtraPassthrough(context, engine)
@@ -444,6 +449,11 @@ class GoTunnelAdapter(
         engine.startTransparentMitm(port.toLong())
         true
     }.onFailure { Timber.e(it, "Failed to start transparent MITM proxy") }.getOrDefault(false)
+
+    fun startTransparentMitmNonBrowser(port: Int): Boolean = runCatching {
+        engine.startTransparentMitmNonBrowser(port.toLong())
+        true
+    }.onFailure { Timber.e(it, "Failed to start non-browser transparent MITM proxy") }.getOrDefault(false)
 
     fun stopTransparentMitm() {
         runCatching { engine.stopTransparentMitm() }

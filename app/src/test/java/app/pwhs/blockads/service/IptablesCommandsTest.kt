@@ -100,4 +100,27 @@ class IptablesCommandsTest {
             forced.any { it.endsWith(" opportunistic") }
         )
     }
+
+    @Test
+    fun `non-browser MITM apps are redirected to the auto-bypass listener`() {
+        val cmds = IptablesManager.buildIpv4Commands(
+            10123, blockDoT = false, whitelistUids = emptyList(), httpsFiltering = true,
+            browserUids = listOf(10189, 10300), nonBrowserMitmUids = listOf(10300)
+        )
+        assertTrue(cmds.contains("iptables -t nat -A BLOCKADS_HTTP -m owner --uid-owner 10189 -p tcp --dport 443 -j REDIRECT --to-ports 15354"))
+        assertTrue(cmds.contains("iptables -t nat -A BLOCKADS_HTTP -m owner --uid-owner 10300 -p tcp --dport 443 -j REDIRECT --to-ports 15356"))
+        assertTrue(cmds.contains("iptables -t nat -A BLOCKADS_HTTP -m owner --uid-owner 10300 -p tcp --dport 80 -j REDIRECT --to-ports 15356"))
+        // QUIC stays rejected for both.
+        assertTrue(cmds.contains("iptables -t filter -A BLOCKADS_QUIC -m owner --uid-owner 10300 -p udp --dport 443 -j REJECT"))
+    }
+
+    @Test
+    fun `only YouTube and Search Lite are non-browsers in the MITM preset`() {
+        assertTrue(TunnelRuleLoader.isStrictBrowser("com.android.chrome"))
+        assertTrue(TunnelRuleLoader.isStrictBrowser("org.mozilla.firefox"))
+        assertTrue(TunnelRuleLoader.isStrictBrowser("com.brave.browser"))
+        assertFalse(TunnelRuleLoader.isStrictBrowser("com.google.android.youtube"))
+        assertFalse(TunnelRuleLoader.isStrictBrowser("app.revanced.android.youtube"))
+        assertFalse(TunnelRuleLoader.isStrictBrowser("com.google.android.apps.searchlite"))
+    }
 }

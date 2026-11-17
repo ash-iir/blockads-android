@@ -202,6 +202,9 @@ type Engine struct {
 	standaloneMitmListener  net.Listener
 	standaloneMitmListener6 net.Listener
 	standaloneMitmDone      chan struct{}
+	// Second transparent MITM listener for non-browser apps (auto-bypass
+	// on handshake failure); see StartTransparentMitmNonBrowser.
+	nonBrowserMitm *transparentListeners
 
 	// Stats
 	totalQueries   atomic.Int64

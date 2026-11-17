@@ -345,3 +345,55 @@ func TestStartStackMitmAutoBypassDefaultOff(t *testing.T) {
 		t.Fatal("SetMitmAutoBypass(true) did not reach the filter")
 	}
 }
+
+// SetMitmNoAutoBypassUIDs reaches the filter, and the root-mode transparent
+// listeners label unresolvable flows with a UID of their own policy.
+func TestSetMitmNoAutoBypassUIDsAndTransparentPolicy(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine()
+	if e.StartStackMitm(dir) == "" {
+		t.Fatal("StartStackMitm failed")
+	}
+	e.SetMitmAllowedUIDs("10189,10300,10485")
+	e.SetMitmNoAutoBypassUIDs("10189, 10485")
+	f := e.stackMitmFilter
+	if f.ShouldAutoBypass(10189) || f.ShouldAutoBypass(10485) || !f.ShouldAutoBypass(10300) {
+		t.Fatal("policy not applied")
+	}
+	strict := &transparentUIDResolver{filter: f, strict: true}
+	loose := &transparentUIDResolver{filter: f, strict: false}
+	if uid := strict.ResolveUID(6, "127.0.0.1", 1, "1.1.1.1", 443); uid != 10189 {
+		t.Fatalf("strict listener uid = %d", uid)
+	}
+	if uid := loose.ResolveUID(6, "127.0.0.1", 1, "1.1.1.1", 443); uid != 10300 {
+		t.Fatalf("non-browser listener uid = %d", uid)
+	}
+	f.RecordHandshakeFailureForUID("yt3.ggpht.com", "client handshake: bad certificate", 10300)
+	b, err := os.ReadFile(filepath.Join(dir, "mitm_blacklist.txt"))
+	if err != nil || string(b) != "yt3.ggpht.com\n" {
+		t.Fatalf("bypass list: %q %v", b, err)
+	}
+}
+
+func TestTransparentMitmNonBrowserListener(t *testing.T) {
+	e := NewEngine()
+	if err := e.StartTransparentMitmNonBrowser(0); err == nil {
+		t.Fatal("expected an error before StartStackMitm")
+	}
+	if e.StartStackMitm(t.TempDir()) == "" {
+		t.Fatal("StartStackMitm failed")
+	}
+	if err := e.StartTransparentMitm(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.StartTransparentMitmNonBrowser(0); err != nil {
+		t.Fatal(err)
+	}
+	if e.nonBrowserMitm == nil || e.standaloneMitmListener == nil {
+		t.Fatal("listeners not recorded")
+	}
+	e.StopTransparentMitm()
+	if e.nonBrowserMitm != nil || e.standaloneMitmListener != nil {
+		t.Fatal("listeners not cleared")
+	}
+}

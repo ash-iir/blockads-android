@@ -29,6 +29,8 @@ object IptablesManager {
     private const val CHAIN_DNS6_GUARD = "BLOCKADS_DNS6"
     private const val LOCAL_DNS_PORT = 15353
     private const val LOCAL_HTTP_PORT = 15354
+    /** Transparent MITM for non-browser apps (auto-bypass on handshake failure). */
+    const val LOCAL_HTTP_PORT_NON_BROWSER = 15356
 
     @Volatile
     internal var shell: RootShell = LibsuRootShell
@@ -85,7 +87,8 @@ object IptablesManager {
         blockDoT: Boolean = true,
         whitelistUids: Collection<Int> = emptyList(),
         httpsFiltering: Boolean = false,
-        browserUids: Collection<Int> = emptyList()
+        browserUids: Collection<Int> = emptyList(),
+        nonBrowserMitmUids: Collection<Int> = emptyList()
     ): Boolean {
         val uid = context.applicationInfo.uid
         Timber.d("Setting up iptables rules for UID=$uid, blockDoT=$blockDoT, https=$httpsFiltering, browsers=$browserUids, whitelistUids=$whitelistUids")
@@ -107,7 +110,7 @@ object IptablesManager {
         // NOTE: We run each iptables command individually so that a single
         // failure (e.g. chain already exists) doesn't abort the entire setup.
         // ══════════════════════════════════════════════════════════════
-        val ipv4Commands = buildIpv4Commands(uid, blockDoT, whitelistUids, httpsFiltering, browserUids)
+        val ipv4Commands = buildIpv4Commands(uid, blockDoT, whitelistUids, httpsFiltering, browserUids, nonBrowserMitmUids)
 
         var ipv4Success = true
         for (cmd in ipv4Commands) {
@@ -164,7 +167,8 @@ object IptablesManager {
         blockDoT: Boolean,
         whitelistUids: Collection<Int>,
         httpsFiltering: Boolean = false,
-        browserUids: Collection<Int> = emptyList()
+        browserUids: Collection<Int> = emptyList(),
+        nonBrowserMitmUids: Collection<Int> = emptyList()
     ): List<String> = buildList {
         // Create chain (may fail if leftover — that's OK)
         add("iptables -t nat -N $CHAIN 2>/dev/null || true")
@@ -188,8 +192,11 @@ object IptablesManager {
                 add("iptables -t nat -A $CHAIN_HTTP -m owner --uid-owner $wUid -j RETURN")
             }
             for (bUid in browserUids) {
-                add("iptables -t nat -A $CHAIN_HTTP -m owner --uid-owner $bUid -p tcp --dport 80 -j REDIRECT --to-ports $LOCAL_HTTP_PORT")
-                add("iptables -t nat -A $CHAIN_HTTP -m owner --uid-owner $bUid -p tcp --dport 443 -j REDIRECT --to-ports $LOCAL_HTTP_PORT")
+                // Browsers → strict listener; other MITM'd apps (YouTube…) → the
+                // auto-bypass listener, so the engine can tell them apart.
+                val port = if (bUid in nonBrowserMitmUids) LOCAL_HTTP_PORT_NON_BROWSER else LOCAL_HTTP_PORT
+                add("iptables -t nat -A $CHAIN_HTTP -m owner --uid-owner $bUid -p tcp --dport 80 -j REDIRECT --to-ports $port")
+                add("iptables -t nat -A $CHAIN_HTTP -m owner --uid-owner $bUid -p tcp --dport 443 -j REDIRECT --to-ports $port")
             }
             add("iptables -t nat -A OUTPUT -j $CHAIN_HTTP")
             // Reject QUIC (UDP 443) in its own chain so teardown can flush every copy;

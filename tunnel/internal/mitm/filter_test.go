@@ -235,3 +235,52 @@ func TestRecordHandshakeFailureDefaultOff(t *testing.T) {
 		t.Fatalf("opt-in entry not persisted: %q", data)
 	}
 }
+
+func TestShouldAutoBypassPolicy(t *testing.T) {
+	f := NewMitmFilter()
+	if f.ShouldAutoBypass(10300) {
+		t.Fatal("unconfigured filter must follow the global switch (off)")
+	}
+	f.SetAllowedUIDs([]int{10189, 10300, 10485})
+	f.SetNoAutoBypassUIDs([]int{10189, 10485})
+	cases := map[int]bool{10189: false, 10485: false, 10300: true, 12345: true, UIDUnknown: false, 0: true}
+	for uid, want := range cases {
+		if got := f.ShouldAutoBypass(uid); got != want {
+			t.Errorf("ShouldAutoBypass(%d) = %v, want %v", uid, got, want)
+		}
+	}
+	// The global opt-in must not override the browser exception.
+	f.SetAutoBypass(true)
+	if f.ShouldAutoBypass(10189) {
+		t.Fatal("browser auto-bypassed with the global switch on")
+	}
+	if got := f.FirstAllowedUIDForPolicy(true); got != 10189 {
+		t.Fatalf("strict representative = %d", got)
+	}
+	if got := f.FirstAllowedUIDForPolicy(false); got != 10300 {
+		t.Fatalf("non-browser representative = %d", got)
+	}
+	f.SetNoAutoBypassUIDs(nil)
+	if !f.ShouldAutoBypass(10189) {
+		t.Fatal("cleared set: global switch (on) should apply")
+	}
+}
+
+func TestRecordHandshakeFailureForUIDPersists(t *testing.T) {
+	dir := t.TempDir()
+	bl := filepath.Join(dir, "mitm_blacklist.txt")
+	f := NewMitmFilter()
+	f.LoadPersistentBlacklist(bl)
+	f.SetNoAutoBypassUIDs([]int{10189})
+	if f.RecordHandshakeFailureForUID("www.youtube.com", "client handshake: bad certificate", 10189) {
+		t.Fatal("browser uid added a host")
+	}
+	if !f.RecordHandshakeFailureForUID("youtubei.googleapis.com", "client handshake: bad certificate", 10300) {
+		t.Fatal("non-browser uid did not add the host")
+	}
+	g := NewMitmFilter()
+	g.LoadPersistentBlacklist(bl)
+	if g.IsInterceptionAllowed("youtubei.googleapis.com") || !g.IsInterceptionAllowed("www.youtube.com") {
+		t.Fatal("bypass list not persisted as expected")
+	}
+}

@@ -189,7 +189,7 @@ func NewMitmTcpHandler(
 
 		// Gate 7 — MITM.
 		if classification == classTLS {
-			mitmTLSFlow(conn, peekedReader, certMgr, filter, blocker, hostname, flow, protectFn)
+			mitmTLSFlow(conn, peekedReader, certMgr, filter, blocker, hostname, flow, uid, protectFn)
 		} else {
 			mitmHTTPFlow(conn, peekedReader, filter, blocker, hostname, flow, protectFn)
 		}

@@ -149,6 +149,7 @@ class RootProxyService : Service() {
 
     @Volatile
     private var activeBrowserUids: List<Int> = emptyList()
+    private var activeNonBrowserMitmUids: List<Int> = emptyList()
 
     // Whether the kernel accepted the ip6tables nat redirect for DNS this session.
     @Volatile
@@ -284,14 +285,19 @@ class RootProxyService : Service() {
                 // 3. Retry loop for Standalone mode and IPTables setup
                 // This is crucial on boot where Magisk `su` might take a few seconds to become available
                 val httpsFiltering = appPrefs.httpsFilteringEnabled.first()
-                val browserUids = if (httpsFiltering) {
-                    val browsers = TunnelRuleLoader.loadPresetBrowsers(this@RootProxyService)
-                    browsers.mapNotNull { pkg ->
-                        runCatching { packageManager.getApplicationInfo(pkg, 0).uid }.getOrNull()
-                    }.distinct()
+                val mitmApps = if (httpsFiltering) {
+                    TunnelRuleLoader.loadPresetBrowsers(this@RootProxyService).mapNotNull { pkg ->
+                        runCatching { packageManager.getApplicationInfo(pkg, 0).uid }.getOrNull()?.let { pkg to it }
+                    }
                 } else emptyList()
+                val browserUids = mitmApps.map { it.second }.distinct()
+                // Real browsers: never auto-bypassed. Everything else in the MITM set
+                // (YouTube…) gets hosts it rejects added to mitm_blacklist.txt.
+                val strictBrowserUids = mitmApps.filter { TunnelRuleLoader.isStrictBrowser(it.first) }.map { it.second }.distinct()
+                val nonBrowserUids = browserUids - strictBrowserUids.toSet()
                 activeHttpsFiltering = httpsFiltering
                 activeBrowserUids = browserUids
+                activeNonBrowserMitmUids = emptyList()
 
                 val proxyStarted = RootProxyStartup.establish(
                     retryManager = { retryManager },
@@ -302,8 +308,14 @@ class RootProxyService : Service() {
                             val certDir = filesDir.absolutePath
                             goTunnelAdapter.engine.startStackMitm(certDir)
                             goTunnelAdapter.engine.setMitmAllowedUIDs(browserUids.joinToString(","))
+                            goTunnelAdapter.engine.setMitmNoAutoBypassUIDs(strictBrowserUids.joinToString(","))
                             TunnelRuleLoader.loadExtraPassthrough(this@RootProxyService, goTunnelAdapter.engine)
                             goTunnelAdapter.startTransparentMitm(port = 15354)
+                            // Only send non-browser apps to their own listener when it is up;
+                            // otherwise they stay on the strict one (no auto-bypass).
+                            activeNonBrowserMitmUids = if (nonBrowserUids.isNotEmpty() &&
+                                goTunnelAdapter.startTransparentMitmNonBrowser(IptablesManager.LOCAL_HTTP_PORT_NON_BROWSER)
+                            ) nonBrowserUids else emptyList()
                         }
                         dnsOk
                     },
@@ -312,7 +324,8 @@ class RootProxyService : Service() {
                             this@RootProxyService,
                             whitelistUids = whitelistedUids,
                             httpsFiltering = httpsFiltering,
-                            browserUids = browserUids
+                            browserUids = browserUids,
+                            nonBrowserMitmUids = activeNonBrowserMitmUids
                         )
                     },
                     stopEngine = { goTunnelAdapter.stop() },
@@ -476,7 +489,8 @@ class RootProxyService : Service() {
                         this@RootProxyService,
                         whitelistUids = whitelistedUids,
                         httpsFiltering = activeHttpsFiltering,
-                        browserUids = activeBrowserUids
+                        browserUids = activeBrowserUids,
+                        nonBrowserMitmUids = activeNonBrowserMitmUids
                     )
                     ipv6NatRedirect = IptablesManager.hasIpv6DnsRedirect()
                 }

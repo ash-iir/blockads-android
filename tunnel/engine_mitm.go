@@ -79,6 +79,41 @@ func (e *Engine) SetMitmAutoBypass(enabled bool) {
 	filter.SetAutoBypass(enabled)
 }
 
+// SetMitmNoAutoBypassUIDs sets the browser UIDs (CSV) whose client
+// handshake failures are only logged, never added to the bypass list.
+// Once set, a handshake failure from any other known UID (non-browser
+// apps in the MITM set, e.g. YouTube) adds the host to mitm_blacklist.txt.
+// An empty string still configures the set (every known UID auto-bypasses).
+func (e *Engine) SetMitmNoAutoBypassUIDs(uidsCsv string) {
+	e.mu.Lock()
+	if e.stackMitmFilter == nil {
+		e.stackMitmFilter = NewMitmFilter()
+	}
+	filter := e.stackMitmFilter
+	e.mu.Unlock()
+	filter.SetNoAutoBypassUIDs(parseUIDCsv(uidsCsv))
+}
+
+func parseUIDCsv(uidsCsv string) []int {
+	uids := make([]int, 0)
+	for _, s := range strings.Split(uidsCsv, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		uid := 0
+		for _, c := range s {
+			if c >= '0' && c <= '9' {
+				uid = uid*10 + int(c-'0')
+			}
+		}
+		if uid > 0 {
+			uids = append(uids, uid)
+		}
+	}
+	return uids
+}
+
 // StopStackMitm clears stack-mode MITM state. The stack itself keeps
 // running on the direct-dial handler after this call.
 func (e *Engine) StopStackMitm() {

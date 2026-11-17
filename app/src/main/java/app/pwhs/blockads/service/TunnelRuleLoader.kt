@@ -201,6 +201,21 @@ object TunnelRuleLoader {
         }
     }
 
+    /**
+     * Apps in preset/browsers.txt that are not real browsers. Their HTTPS is
+     * filtered too, but when one rejects the BlockAds certificate the host is
+     * added to mitm_blacklist.txt automatically (auto-bypass); real browsers
+     * never are (they only get a mitm_handshake_failures.txt line).
+     */
+    val NON_BROWSER_MITM_PACKAGES: Set<String> = setOf(
+        "com.google.android.youtube",
+        "app.revanced.android.youtube",
+        "com.google.android.apps.searchlite",
+    )
+
+    /** True for a real browser (never auto-bypassed on handshake failure). */
+    fun isStrictBrowser(pkg: String): Boolean = pkg !in NON_BROWSER_MITM_PACKAGES
+
     fun loadPresetBrowsers(context: Context): Set<String> = runCatching {
         context.assets.open("preset/browsers.txt").bufferedReader().useLines { lines ->
             lines.map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }.toSet()

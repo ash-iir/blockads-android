@@ -3,6 +3,7 @@ package mitm
 import (
 	"bufio"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -77,6 +78,15 @@ type MitmFilter struct {
 	failureLogPath string
 	failureSeen    map[string]bool
 	failureFileMu  sync.Mutex
+
+	// noAutoBypassUIDs are the apps (real browsers) whose handshake
+	// failures must never put a host on the bypass list. Once this set is
+	// configured (SetNoAutoBypassUIDs), auto-bypass is ON for every other
+	// known UID (e.g. YouTube): a client that rejects the BlockAds
+	// certificate gets the host added to the persistent bypass list, as
+	// the original behaviour did. Unknown UIDs are treated as strict.
+	noAutoBypassUIDs       map[int]bool
+	noAutoBypassConfigured bool
 }
 
 // sniSensitiveKeywords — if a domain contains any of these, NEVER intercept.
@@ -171,6 +181,64 @@ func (f *MitmFilter) AutoBypassEnabled() bool {
 	return f.autoBypass
 }
 
+// SetNoAutoBypassUIDs configures the strict (browser) UIDs. A nil slice
+// clears the configuration (auto-bypass then follows SetAutoBypass only).
+// With the set configured, ShouldAutoBypass is true for every known UID
+// that is not in it.
+func (f *MitmFilter) SetNoAutoBypassUIDs(uids []int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if uids == nil {
+		f.noAutoBypassConfigured = false
+		f.noAutoBypassUIDs = nil
+		logf("MITM Filter: cleared no-auto-bypass UIDs")
+		return
+	}
+	f.noAutoBypassConfigured = true
+	f.noAutoBypassUIDs = make(map[int]bool, len(uids))
+	for _, uid := range uids {
+		f.noAutoBypassUIDs[uid] = true
+	}
+	logf("MITM Filter: auto-bypass on handshake failure for non-browser apps; %d browser UIDs never bypassed", len(uids))
+}
+
+// ShouldAutoBypass reports whether a client handshake failure from uid
+// adds the host to the persistent bypass list.
+func (f *MitmFilter) ShouldAutoBypass(uid int) bool {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if f.noAutoBypassConfigured {
+		if uid == UIDUnknown || uid < 0 || f.noAutoBypassUIDs[uid] {
+			return false
+		}
+		return true
+	}
+	return f.autoBypass
+}
+
+// FirstAllowedUIDForPolicy returns an allowed UID that is in the strict
+// (no-auto-bypass) set when strict is true, or outside it when false.
+// Used to label flows whose real UID cannot be resolved (root-mode
+// transparent listeners, one per policy). Falls back to FirstAllowedUID
+// when the strict set is not configured; -1 when nothing matches.
+func (f *MitmFilter) FirstAllowedUIDForPolicy(strict bool) int {
+	f.mu.RLock()
+	configured := f.noAutoBypassConfigured
+	best := -1
+	if configured {
+		for uid := range f.allowedUIDs {
+			if f.noAutoBypassUIDs[uid] == strict && (best < 0 || uid < best) {
+				best = uid
+			}
+		}
+	}
+	f.mu.RUnlock()
+	if !configured {
+		return f.FirstAllowedUID()
+	}
+	return best
+}
+
 // SetFailureLogPath points the filter at the diagnostic file used by
 // RecordHandshakeFailure. Empty disables the file (logcat only).
 func (f *MitmFilter) SetFailureLogPath(path string) {
@@ -181,10 +249,27 @@ func (f *MitmFilter) SetFailureLogPath(path string) {
 
 // RecordHandshakeFailure is called when MITM could not be applied to a
 // host (the client rejected our certificate, or the upstream is EV / asks
-// for a client certificate). It always records the host in the diagnostic
-// file; it adds the host to the bypass list only when auto-bypass is on.
+// for a client certificate) and the client UID is not known. It always
+// records the host in the diagnostic file; it adds the host to the bypass
+// list only when the global auto-bypass is on.
 // Returns true when the host was added to the bypass list.
 func (f *MitmFilter) RecordHandshakeFailure(host, reason string) bool {
+	f.mu.RLock()
+	auto := f.autoBypass
+	f.mu.RUnlock()
+	return f.recordFailure(host, reason, UIDUnknown, auto)
+}
+
+// RecordHandshakeFailureForUID records a client handshake failure from
+// uid. The host is added to the persistent bypass list when
+// ShouldAutoBypass(uid) is true (non-browser apps once the browser UIDs
+// are configured); browsers only get the diagnostic line.
+// Returns true when the host was added to the bypass list.
+func (f *MitmFilter) RecordHandshakeFailureForUID(host, reason string, uid int) bool {
+	return f.recordFailure(host, reason, uid, f.ShouldAutoBypass(uid))
+}
+
+func (f *MitmFilter) recordFailure(host, reason string, uid int, auto bool) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "" {
 		return false
@@ -195,7 +280,6 @@ func (f *MitmFilter) RecordHandshakeFailure(host, reason string) bool {
 	}
 
 	f.mu.Lock()
-	auto := f.autoBypass
 	path := f.failureLogPath
 	key := host + "\t" + reason
 	seen := f.failureSeen[key]
@@ -203,11 +287,18 @@ func (f *MitmFilter) RecordHandshakeFailure(host, reason string) bool {
 	f.mu.Unlock()
 
 	if !seen {
-		logf("MITM Filter: handshake/passthrough on '%s' (%s); auto-bypass %v", host, reason, auto)
+		logf("MITM Filter: handshake/passthrough on '%s' (%s); uid %d; auto-bypass %v", host, reason, uid, auto)
 		if path != "" {
+			line := time.Now().Format(time.RFC3339) + "\t" + host + "\t" + reason
+			if uid != UIDUnknown {
+				line += "\tuid=" + strconv.Itoa(uid)
+			}
+			if auto {
+				line += "\tbypassed"
+			}
 			f.failureFileMu.Lock()
 			if file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-				file.WriteString(time.Now().Format(time.RFC3339) + "\t" + host + "\t" + reason + "\n")
+				file.WriteString(line + "\n")
 				file.Close()
 			} else {
 				logf("MITM Filter: WARNING — cannot write failure log: %v", err)

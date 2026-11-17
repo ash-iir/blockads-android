@@ -116,6 +116,7 @@ type Engine struct
 	method Engine.SetLogCallback(cb LogCallback)
 	method Engine.SetMitmAllowedUIDs(uidsCsv string)
 	method Engine.SetMitmAutoBypass(enabled bool)
+	method Engine.SetMitmNoAutoBypassUIDs(uidsCsv string)
 	method Engine.SetModulesConfig(jsonStr string) error
 	method Engine.SetODoHRelay(relayURL string)
 	method Engine.SetOutboundAdapter(adapter OutboundAdapter)
@@ -147,6 +148,7 @@ type Engine struct
 	method Engine.StartTailscaleAuth(hostname string) string
 	method Engine.StartTailscaleSession(hostname string) error
 	method Engine.StartTransparentMitm(port int) error
+	method Engine.StartTransparentMitmNonBrowser(port int) error
 	method Engine.Stop()
 	method Engine.StopStackMitm()
 	method Engine.StopTailscale()
@@ -167,6 +169,7 @@ type MitmFilter = internal/mitm.MitmFilter
 	method MitmFilter.AutoBypassEnabled() bool
 	method MitmFilter.BlacklistDomain(host string)
 	method MitmFilter.FirstAllowedUID() int
+	method MitmFilter.FirstAllowedUIDForPolicy(strict bool) int
 	method MitmFilter.GetBlacklistCount() int
 	method MitmFilter.HasAllowedUIDs() bool
 	method MitmFilter.IsAdPathBlocked(urlPath string) bool
@@ -174,11 +177,14 @@ type MitmFilter = internal/mitm.MitmFilter
 	method MitmFilter.IsUIDAllowed(uid int) bool
 	method MitmFilter.LoadPersistentBlacklist(path string)
 	method MitmFilter.RecordHandshakeFailure(host string, reason string) bool
+	method MitmFilter.RecordHandshakeFailureForUID(host string, reason string, uid int) bool
 	method MitmFilter.SetAdPathPatterns(patterns []string)
 	method MitmFilter.SetAllowedUIDs(uids []int)
 	method MitmFilter.SetAutoBypass(enabled bool)
 	method MitmFilter.SetExtraPassthroughSuffixes(suffixes []string)
 	method MitmFilter.SetFailureLogPath(path string)
+	method MitmFilter.SetNoAutoBypassUIDs(uids []int)
+	method MitmFilter.ShouldAutoBypass(uid int) bool
 type MmapTrie = internal/trie.MmapTrie
 	method MmapTrie.Close()
 	method MmapTrie.ContainsOrParent(domain string) bool

@@ -103,11 +103,15 @@ func htmlHandler(w http.ResponseWriter, r *http.Request) {
 
 // runTLSFlow runs mitmTLSFlow against one end of a pipe and returns the other.
 func runTLSFlow(t *testing.T, cm *CertManager, filter *MitmFilter, host string, flow flowID) (net.Conn, chan struct{}) {
+	return runTLSFlowUID(t, cm, filter, host, flow, UIDUnknown)
+}
+
+func runTLSFlowUID(t *testing.T, cm *CertManager, filter *MitmFilter, host string, flow flowID, uid int) (net.Conn, chan struct{}) {
 	t.Helper()
 	cli, srv := net.Pipe()
 	done := make(chan struct{})
 	go func() {
-		mitmTLSFlow(srv, srv, cm, filter, &fakeBlocker{}, host, flow, nil)
+		mitmTLSFlow(srv, srv, cm, filter, &fakeBlocker{}, host, flow, uid, nil)
 		srv.Close()
 		close(done)
 	}()
@@ -479,4 +483,54 @@ func TestServeLocalAssetOverFlow(t *testing.T) {
 		io.Copy(io.Discard, resp.Body)
 		waitClosed(t, done)
 	})
+}
+
+// Browsers (no-auto-bypass UIDs) only get the diagnostic line; any other
+// app (e.g. YouTube, uid 10300) gets the host on the persistent bypass list.
+func TestMitmTLSFlowClientRejectsCertPerUIDPolicy(t *testing.T) {
+	pki := newTestPKI(t)
+	upstreamRootPool().AddCert(pki.cert)
+	cm, _ := newTestCertManager(t)
+	dir := t.TempDir()
+	bl := filepath.Join(dir, "mitm_blacklist.txt")
+	logPath := filepath.Join(dir, "mitm_handshake_failures.txt")
+	filter := NewMitmFilter()
+	filter.LoadPersistentBlacklist(bl)
+	filter.SetFailureLogPath(logPath)
+	filter.SetAllowedUIDs([]int{10189, 10300})
+	filter.SetNoAutoBypassUIDs([]int{10189})
+
+	reject := func(host string, uid int) {
+		flow := startUpstream(t, pki.leaf(t, host), tls.NoClientCert, htmlHandler)
+		cli, done := runTLSFlowUID(t, cm, filter, host, flow, uid)
+		c := tls.Client(cli, &tls.Config{ServerName: host, RootCAs: x509.NewCertPool()})
+		if err := c.Handshake(); err == nil {
+			t.Fatal("client accepted an untrusted MITM cert")
+		}
+		cli.Close()
+		waitClosed(t, done)
+	}
+
+	reject("browser.test", 10189)
+	if !filter.IsInterceptionAllowed("browser.test") {
+		t.Fatal("browser handshake failure bypassed the host")
+	}
+	reject("app.test", 10300)
+	if filter.IsInterceptionAllowed("app.test") {
+		t.Fatal("non-browser handshake failure did not bypass the host")
+	}
+	reject("unknown.test", UIDUnknown)
+	if !filter.IsInterceptionAllowed("unknown.test") {
+		t.Fatal("unknown uid must be treated as a browser")
+	}
+	data, _ := os.ReadFile(bl)
+	if string(data) != "app.test\n" {
+		t.Fatalf("bypass list = %q, want only app.test", data)
+	}
+	log, _ := os.ReadFile(logPath)
+	for _, want := range []string{"\tbrowser.test\t", "\tapp.test\t", "uid=10300\tbypassed", "uid=10189\n"} {
+		if !strings.Contains(string(log), want) {
+			t.Fatalf("failure log misses %q:\n%s", want, log)
+		}
+	}
 }

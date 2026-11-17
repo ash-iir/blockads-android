@@ -46,6 +46,10 @@ jobs:
       - name: Build IPv6 DNS root helper
         run: ./scripts/build-dns6helper.sh
 
+      - name: MITM auto-bypass policy tests (Go)
+        working-directory: tunnel
+        run: go test ./internal/mitm/ && go test -run 'Mitm|Transparent|ExportedAPI' .
+
       - name: Root WireGuard helper tests
         working-directory: tools/wghelper
         run: go vet ./... && go test ./...
@@ -84,7 +88,7 @@ jobs:
           ls -l "$dbg" "$opt"; sha256sum "$dbg" "$opt"
 
       - name: Root Proxy unit tests
-        run: ./gradlew -Ptunnel.source=prebuilt :app:testFdroidDebugUnitTest --tests '*Ipv6DnsRedirectTest' --tests '*IptablesManager*' --tests '*RootProxy*' --tests '*RootWireGuard*'
+        run: ./gradlew -Ptunnel.source=prebuilt :app:testFdroidDebugUnitTest --tests '*Ipv6DnsRedirectTest' --tests '*IptablesManager*' --tests '*IptablesCommands*' --tests '*RootProxy*' --tests '*RootWireGuard*'
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

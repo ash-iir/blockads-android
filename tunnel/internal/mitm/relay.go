@@ -73,6 +73,7 @@ func mitmTLSFlow(
 	blocker adBlockChecker,
 	hostname string,
 	flow flowID,
+	uid int,
 	protectFn func(fd int) bool,
 ) {
 	rawServer, err := dialUpstream(flow, hostname, blocker, protectFn)
@@ -111,9 +112,11 @@ func mitmTLSFlow(
 	if err := clientTLS.Handshake(); err != nil {
 		// The client refused our certificate (pinning, or the CA is not
 		// trusted). Close the connection; record the host for diagnosis.
-		// It is added to the bypass list only when auto-bypass is on.
+		// Non-browser apps (outside the no-auto-bypass UID set) get the
+		// host added to the bypass list so their next connection works;
+		// browsers never do.
 		if isClientCertRejection(err.Error()) {
-			filter.RecordHandshakeFailure(hostname, "client handshake: "+err.Error())
+			filter.RecordHandshakeFailureForUID(hostname, "client handshake: "+err.Error(), uid)
 		}
 		return
 	}
