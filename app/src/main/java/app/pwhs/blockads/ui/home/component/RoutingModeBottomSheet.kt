@@ -30,7 +30,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -51,7 +50,7 @@ import app.pwhs.blockads.data.entities.ProxyProfile
 import app.pwhs.blockads.data.entities.ShadowsocksProfile
 import app.pwhs.blockads.data.entities.WireGuardProfile
 import app.pwhs.blockads.data.geoip.GeoIpLookup
-import app.pwhs.blockads.service.RootWireGuard
+import app.pwhs.blockads.ui.component.RootWireGuardOptions
 import app.pwhs.blockads.ui.theme.AccentBlue
 import app.pwhs.blockads.ui.theme.DangerRed
 import app.pwhs.blockads.ui.theme.TextSecondary
@@ -234,72 +233,6 @@ fun RoutingModeBottomSheet(
                     onEnabledChange = onRootWgEnabledChange,
                     onKillSwitchChange = onRootWgKillSwitchChange,
                 )
-            }
-        }
-    }
-}
-
-/** Root mode only: WireGuard through kernel WireGuard + uid routing (no VpnService). */
-@Composable
-private fun RootWireGuardOptions(
-    activeWgProfile: WireGuardProfile?,
-    enabled: Boolean,
-    killSwitch: Boolean,
-    onEnabledChange: (Boolean) -> Unit,
-    onKillSwitchChange: (Boolean) -> Unit,
-) {
-    val unsupported = activeWgProfile?.let { RootWireGuard.unsupportedReason(it.config) }
-    val status = when {
-        activeWgProfile == null -> stringResource(R.string.root_wg_no_profile)
-        unsupported != null -> stringResource(R.string.root_wg_amnezia)
-        else -> stringResource(R.string.root_wg_profile, activeWgProfile.name)
-    }
-    val usable = activeWgProfile != null && unsupported == null
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
-            .padding(horizontal = 14.dp, vertical = 8.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.root_wg_title),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = stringResource(R.string.root_wg_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary,
-                )
-                Text(
-                    text = status,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (usable) MaterialTheme.colorScheme.primary else DangerRed,
-                )
-            }
-            Switch(
-                checked = enabled,
-                onCheckedChange = onEnabledChange,
-                enabled = usable || enabled,
-            )
-        }
-        if (enabled) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.root_wg_kill_switch),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        text = stringResource(R.string.root_wg_kill_switch_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary,
-                    )
-                }
-                Switch(checked = killSwitch, onCheckedChange = onKillSwitchChange)
             }
         }
     }

@@ -27,6 +27,7 @@ import app.pwhs.blockads.service.AdBlockVpnService
 import app.pwhs.blockads.service.IptablesManager
 import app.pwhs.blockads.service.NotificationHelper
 import app.pwhs.blockads.service.RootProxyService
+import app.pwhs.blockads.service.RootWireGuardSettings
 import app.pwhs.blockads.service.ServiceController
 import app.pwhs.blockads.service.VpnState
 import app.pwhs.blockads.ui.home.component.ActiveFeatureBadge
@@ -93,17 +94,13 @@ class HomeViewModel(
     /** Root mode: tunnel apps through the active WireGuard profile (kernel WireGuard). */
     fun setRootWgEnabled(enabled: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {
-            appPrefs.wireguard.setRootWireGuardEnabled(enabled)
-            if (RootProxyService.isRunning) RootProxyService.requestRestart(context)
+            RootWireGuardSettings.setEnabled(context, appPrefs, enabled)
         }
     }
 
     fun setRootWgKillSwitch(enabled: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {
-            appPrefs.wireguard.setRootWireGuardKillSwitch(enabled)
-            if (RootProxyService.isRunning && appPrefs.wireguard.rootWireGuardEnabled.first()) {
-                RootProxyService.requestRestart(context)
-            }
+            RootWireGuardSettings.setKillSwitch(context, appPrefs, enabled)
         }
     }
 

@@ -8,4 +8,14 @@
     <string name="root_wg_amnezia">AmneziaWG profiles are not supported in Root mode yet</string>
     <string name="root_wg_kill_switch">Kill switch</string>
     <string name="root_wg_kill_switch_desc">Block routed apps instead of bypassing a dead tunnel</string>
+    <!-- Settings → Proxy & VPN: root tunnel section -->
+    <string name="root_wg_section_title">Root tunnel (no VPN slot)</string>
+    <string name="root_wg_needs_root_mode">Switch to Root Proxy mode to use (Home → Routing mode → Root Proxy).</string>
+    <string name="root_wg_status_connected">Connected</string>
+    <string name="root_wg_status_no_handshake">Starting — waiting for handshake</string>
+    <string name="root_wg_status_down">Not connected</string>
+    <string name="root_wg_status_handshake">Last handshake: %1$s ago</string>
+    <string name="root_wg_status_handshake_never">Last handshake: never</string>
+    <string name="root_wg_status_endpoint">Endpoint: %1$s</string>
+    <string name="root_wg_status_traffic">Received %1$s · Sent %2$s</string>
 </resources>

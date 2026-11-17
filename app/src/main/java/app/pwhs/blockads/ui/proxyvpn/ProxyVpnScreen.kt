@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.pwhs.blockads.R
 import app.pwhs.blockads.ui.component.rememberIsExpandedLayout
+import app.pwhs.blockads.ui.component.RootWireGuardOptions
 import app.pwhs.blockads.data.datastore.AppPreferences
 import app.pwhs.blockads.data.entities.ProxyProfile
 import app.pwhs.blockads.ui.proxyvpn.component.AddProxyNodeDialog
@@ -109,6 +110,11 @@ fun ProxyVpnScreen(
     val lastSubUrl by viewModel.lastSubscriptionUrl.collectAsStateWithLifecycle()
     val isUpdatingSub by viewModel.isUpdatingSubscription.collectAsStateWithLifecycle()
     val proxySubscriptions by viewModel.proxySubscriptions.collectAsStateWithLifecycle()
+
+    val isRootMode by viewModel.isRootMode.collectAsStateWithLifecycle()
+    val rootWgEnabled by viewModel.rootWgEnabled.collectAsStateWithLifecycle()
+    val rootWgKillSwitch by viewModel.rootWgKillSwitch.collectAsStateWithLifecycle()
+    val rootWgStatus by viewModel.rootWgStatus.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -338,6 +344,23 @@ fun ProxyVpnScreen(
             )
         }
 
+        // Root tunnel: kernel WireGuard in Root Proxy mode (no VPN slot, MITM stays on).
+        val rootTunnelContent: @Composable () -> Unit = {
+            RootWireGuardOptions(
+                activeWgProfile = activeWg,
+                enabled = rootWgEnabled,
+                killSwitch = rootWgKillSwitch,
+                onEnabledChange = viewModel::setRootWgEnabled,
+                onKillSwitchChange = viewModel::setRootWgKillSwitch,
+                title = stringResource(R.string.root_wg_section_title),
+                rootModeActive = isRootMode,
+                status = rootWgStatus?.status,
+                showStatus = true,
+                nowMs = rootWgStatus?.readAtMs ?: System.currentTimeMillis(),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+
         val nodesContent: @Composable (Modifier) -> Unit = { nodesModifier ->
             UnifiedProxyNodesContent(
                 wgProfiles = wgProfiles,
@@ -393,7 +416,10 @@ fun ProxyVpnScreen(
                             .fillMaxHeight(),
                         contentAlignment = Alignment.TopCenter
                     ) {
-                        heroCardContent()
+                        Column {
+                            heroCardContent()
+                            rootTunnelContent()
+                        }
                     }
 
                     nodesContent(
@@ -405,6 +431,7 @@ fun ProxyVpnScreen(
             } else {
                 Column(modifier = Modifier.fillMaxSize()) {
                     heroCardContent()
+                    rootTunnelContent()
                     Spacer(modifier = Modifier.height(4.dp))
                     nodesContent(Modifier.weight(1f))
                 }

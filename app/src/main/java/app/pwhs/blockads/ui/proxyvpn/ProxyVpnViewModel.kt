@@ -25,6 +25,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import app.pwhs.blockads.service.RootWireGuardSettings
+import app.pwhs.blockads.service.RootWireGuardStatus
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import app.pwhs.blockads.utils.NodePingResult
@@ -173,6 +180,37 @@ class ProxyVpnViewModel(
     private val _events = MutableSharedFlow<ProxyVpnUiEvent>()
     val events: SharedFlow<ProxyVpnUiEvent> = _events.asSharedFlow()
 
+    // ── Root tunnel (Root Proxy mode, kernel WireGuard, no VPN slot) ─────
+
+    val isRootMode: StateFlow<Boolean> = appPrefs.routingMode
+        .map { it == AppPreferences.ROUTING_MODE_ROOT }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val rootWgEnabled: StateFlow<Boolean> = appPrefs.wireguard.rootWireGuardEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val rootWgKillSwitch: StateFlow<Boolean> = appPrefs.wireguard.rootWireGuardKillSwitch
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    /** Live helper status, polled only while the root tunnel is on in Root mode. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val rootWgStatus: StateFlow<RootWireGuardStatus.Reading?> = combine(isRootMode, rootWgEnabled) { root, on -> root && on }
+        .distinctUntilChanged()
+        .flatMapLatest { poll -> if (poll) RootWireGuardStatus.poll(getApplication<Application>()) else flowOf<RootWireGuardStatus.Reading?>(null) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    fun setRootWgEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            RootWireGuardSettings.setEnabled(getApplication<Application>(), appPrefs, enabled)
+        }
+    }
+
+    fun setRootWgKillSwitch(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            RootWireGuardSettings.setKillSwitch(getApplication<Application>(), appPrefs, enabled)
+        }
+    }
+
     init {
         combine(appPrefs.wgProfiles, appPrefs.wgActiveProfileId) { l, a -> l to a }
             .onEach { (list, active) ->
@@ -249,6 +287,16 @@ class ProxyVpnViewModel(
             val profile = _wgProfiles.value.firstOrNull { it.id == id } ?: return@launch
             profile.configIssue?.let { issue ->
                 _error.value = fixFirstMessage(profile, issue)
+                return@launch
+            }
+            if (appPrefs.routingMode.first() == AppPreferences.ROUTING_MODE_ROOT &&
+                appPrefs.wireguard.rootWireGuardEnabled.first()
+            ) {
+                // Root tunnel uses the active WireGuard profile: switch profile only,
+                // stay in Root mode and keep HTTPS filtering (MITM) on.
+                appPrefs.setActiveWgProfile(id)
+                _events.emit(ProxyVpnUiEvent.ProfileActivated(profile.name))
+                RootWireGuardSettings.onProfileChanged(getApplication<Application>(), appPrefs)
                 return@launch
             }
             disableHttpsFilteringIfNeeded()
