@@ -41,7 +41,7 @@ echo "== selftest"; "$BIN" selftest
 # Foreign rules inside our pref range: down must leave them alone.
 $IP -4 rule add pref 10050 uidrange 10000-19999 lookup 1050
 $IP -4 rule add pref 10002 iif lo uidrange 19999-19999 lookup 980   # matches local traffic of uid 19999 only
-$IP -6 rule add pref 10099 unreachable
+$IP -6 rule add pref 10099 from 2001:db8:dead::/48 unreachable   # first at 10099: our gotos land on it and must fall through
 
 echo "== apply"; "$BIN" apply -config /tmp/wghelper-test.json
 "$BIN" rules
