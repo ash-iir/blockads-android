@@ -174,12 +174,16 @@ class RootProxyServiceShellTest {
         assertEquals(VpnState.STOPPED, RootProxyService.state.value)
     }
 
-    @Ignore("known bug: onTaskRemoved removes the iptables rules but the state stays RUNNING")
     @Test
     fun `task removal does not leave a RUNNING state without rules`() {
         startRunning()
+        val before = shell.batches.size
         controller.get().onTaskRemoved(null)
-        assertEquals(IptablesManager.teardownCommands(), shell.batches.last())
-        assertTrue(RootProxyService.state.value != VpnState.RUNNING)
+        // Swiping from Recents keeps the foreground service AND its rules.
+        assertTrue(
+            "onTaskRemoved must not tear the rules down",
+            shell.batches.drop(before).none { it == IptablesManager.teardownCommands() }
+        )
+        assertEquals(VpnState.RUNNING, RootProxyService.state.value)
     }
 }

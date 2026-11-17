@@ -47,6 +47,9 @@ import timber.log.Timber
 class RootProxyService : Service() {
 
     companion object {
+        private const val WATCHDOG_INTERVAL_MS = 10_000L
+        private const val PROBE_FAILURES_BEFORE_RESTART = 3
+        private const val LOCAL_DNS_PORT = 15353
         private const val NOTIFICATION_ID = 10
         private const val CHANNEL_ID = "blockads_root_proxy_channel"
 
@@ -127,6 +130,18 @@ class RootProxyService : Service() {
     // Kept as a field so the watchdog re-applies the same rules (#150).
     @Volatile
     private var whitelistedUids: List<Int> = emptyList()
+
+    // HTTPS-filtering parameters of the running session, kept so the watchdog
+    // re-applies exactly the same rules (it used to drop them).
+    @Volatile
+    private var activeHttpsFiltering: Boolean = false
+
+    @Volatile
+    private var activeBrowserUids: List<Int> = emptyList()
+
+    // Whether the kernel accepted the ip6tables nat redirect for DNS this session.
+    @Volatile
+    private var ipv6NatRedirect: Boolean = false
 
     @Volatile
     private var isRecordDnsLogsEnabled = true
@@ -250,6 +265,8 @@ class RootProxyService : Service() {
                         runCatching { packageManager.getApplicationInfo(pkg, 0).uid }.getOrNull()
                     }.distinct()
                 } else emptyList()
+                activeHttpsFiltering = httpsFiltering
+                activeBrowserUids = browserUids
 
                 val proxyStarted = RootProxyStartup.establish(
                     retryManager = { retryManager },
@@ -284,6 +301,10 @@ class RootProxyService : Service() {
                 }
 
                 retryManager.reset()
+
+                // Close the IPv6 DNS leak on kernels without ip6tables nat.
+                ipv6NatRedirect = IptablesManager.hasIpv6DnsRedirect()
+                refreshIpv6DnsGuard(force = true)
 
                 // Start the background /proc/net/udp snapshotter. The
                 // engine's AppResolver reads from this snapshot instead
@@ -393,29 +414,76 @@ class RootProxyService : Service() {
     }
 
     /**
-     * Watchdog monitors Go engine health every 10 seconds.
-     * If the engine is dead, teardown iptables to prevent internet loss.
+     * Watchdog, every 10 seconds:
+     *  1. re-applies the iptables rules if something flushed them (with the
+     *     session's full HTTPS-filtering parameters, not the defaults);
+     *  2. keeps the IPv6 DNS leak guard in sync with the current network
+     *     (Wi-Fi <-> mobile changes which DNS servers exist);
+     *  3. probes the local DNS engine with a real query. If it stops answering
+     *     while a network is up, IPv4 DNS is dead behind the redirect and the
+     *     resolver drifts to unfiltered paths, so the proxy is restarted.
      */
     private fun startWatchdog() {
         watchdogJob?.cancel()
         watchdogJob = serviceScope.launch {
+            var probeFailures = 0
+            var tick = 0
             while (isActive && _state.value == VpnState.RUNNING) {
-                delay(10_000)
-                // TODO: Check Go engine health
-                // if (!goEngine.isRunning()) {
-                //     Timber.w("Go engine died — tearing down iptables")
-                //     IptablesManager.teardownRules()
-                //     isRunning = false
-                //     stopSelf()
-                //     break
-                // }
+                delay(WATCHDOG_INTERVAL_MS)
+                if (_state.value != VpnState.RUNNING) break
+                tick++
 
-                // For now, check if iptables rules are still active
                 if (!IptablesManager.isActive()) {
                     Timber.w("iptables rules disappeared — re-applying")
-                    IptablesManager.setupRules(this@RootProxyService, whitelistUids = whitelistedUids)
+                    IptablesManager.setupRules(
+                        this@RootProxyService,
+                        whitelistUids = whitelistedUids,
+                        httpsFiltering = activeHttpsFiltering,
+                        browserUids = activeBrowserUids
+                    )
+                    ipv6NatRedirect = IptablesManager.hasIpv6DnsRedirect()
+                    refreshIpv6DnsGuard(force = true)
+                } else {
+                    refreshIpv6DnsGuard(force = false)
+                }
+
+                // Probe every 3rd tick (~30s) to keep it cheap.
+                if (tick % 3 == 0) {
+                    val networkUp = DnsNetworkInspector.activeNetworkHasIpv4Dns(this@RootProxyService) != null
+                    if (!networkUp) {
+                        probeFailures = 0
+                    } else if (LocalDnsProbe.isAlive(LOCAL_DNS_PORT)) {
+                        probeFailures = 0
+                    } else {
+                        probeFailures++
+                        Timber.w("Local DNS engine did not answer probe ($probeFailures/$PROBE_FAILURES_BEFORE_RESTART)")
+                        if (probeFailures >= PROBE_FAILURES_BEFORE_RESTART) {
+                            Timber.e("Local DNS engine unresponsive — restarting Root Proxy")
+                            probeFailures = 0
+                            restartProxy()
+                            break
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    /**
+     * Apply/remove the IPv6 DNS leak guard. Not needed when ip6tables nat
+     * already redirects IPv6 DNS. Unknown network state leaves it unchanged.
+     */
+    private fun refreshIpv6DnsGuard(force: Boolean) {
+        try {
+            val uid = applicationInfo.uid
+            if (ipv6NatRedirect) {
+                IptablesManager.syncIpv6DnsGuard(uid, whitelistedUids, enable = false, force = force)
+                return
+            }
+            val hasV4Dns = DnsNetworkInspector.activeNetworkHasIpv4Dns(this) ?: return
+            IptablesManager.syncIpv6DnsGuard(uid, whitelistedUids, enable = hasV4Dns, force = force)
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to refresh IPv6 DNS guard")
         }
     }
 
@@ -433,8 +501,10 @@ class RootProxyService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        Timber.d("RootProxyService onTaskRemoved — teardown iptables")
-        IptablesManager.teardownRules()
+        // Swiping BlockAds out of Recents does NOT stop this foreground service
+        // or the Go engine. Tearing the rules down here left the app "running"
+        // with DNS unfiltered (ads back) until the watchdog noticed. Keep them.
+        Timber.d("RootProxyService onTaskRemoved — service keeps running, rules kept")
         super.onTaskRemoved(rootIntent)
     }
 

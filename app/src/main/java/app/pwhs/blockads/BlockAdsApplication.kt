@@ -1,6 +1,11 @@
 package app.pwhs.blockads
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.UserManager
 import app.pwhs.blockads.data.datastore.AppPreferences
 import app.pwhs.blockads.di.appModule
 import app.pwhs.blockads.worker.DailySummaryScheduler
@@ -40,6 +45,32 @@ class BlockAdsApplication : Application() {
 
         // Schedule auto-update for filter lists after Koin is initialized
         val appPreferences: AppPreferences by inject()
+
+        // Direct boot: BootReceiver (LOCKED_BOOT_COMPLETED) starts this process
+        // before the user unlocks. WorkManager and the credential-encrypted
+        // DataStore are not usable yet — touching WorkManager here crashed the
+        // app on every boot ("WorkManager can't be accessed from direct boot").
+        // Defer all CE-storage work until ACTION_USER_UNLOCKED.
+        if (!isUserUnlocked()) {
+            Timber.d("Direct boot: deferring workers/preferences until user unlock")
+            registerReceiver(object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    runCatching { unregisterReceiver(this) }
+                    runPostUnlockInit(appPreferences)
+                }
+            }, IntentFilter(Intent.ACTION_USER_UNLOCKED))
+            return
+        }
+
+        runPostUnlockInit(appPreferences)
+    }
+
+    private fun isUserUnlocked(): Boolean {
+        val um = getSystemService(Context.USER_SERVICE) as? UserManager ?: return true
+        return um.isUserUnlocked
+    }
+
+    private fun runPostUnlockInit(appPreferences: AppPreferences) {
         val geoIpManager: app.pwhs.blockads.data.geoip.GeoIpManager by inject()
         applicationScope.launch {
             // Restore Crash Reporting state dynamically
