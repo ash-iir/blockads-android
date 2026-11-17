@@ -46,6 +46,13 @@ jobs:
       - name: Build IPv6 DNS root helper
         run: ./scripts/build-dns6helper.sh
 
+      - name: Root WireGuard helper tests
+        working-directory: tools/wghelper
+        run: go vet ./... && go test ./...
+
+      - name: Build Root WireGuard helper
+        run: ./scripts/build-wghelper.sh
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -53,7 +60,7 @@ jobs:
         run: ./gradlew -Ptunnel.source=local :app:assembleFdroidDebug
 
       - name: Root Proxy unit tests
-        run: ./gradlew -Ptunnel.source=prebuilt :app:testFdroidDebugUnitTest --tests '*Ipv6DnsRedirectTest' --tests '*IptablesManager*' --tests '*RootProxy*'
+        run: ./gradlew -Ptunnel.source=prebuilt :app:testFdroidDebugUnitTest --tests '*Ipv6DnsRedirectTest' --tests '*IptablesManager*' --tests '*RootProxy*' --tests '*RootWireGuard*'
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

@@ -504,6 +504,8 @@ fun HomeScreen(
             val activeProxyProfile by viewModel.activeProxyProfile.collectAsStateWithLifecycle()
             val activeSsProfile by viewModel.activeSsProfile.collectAsStateWithLifecycle()
             val activeProxyType by viewModel.activeProxyType.collectAsStateWithLifecycle()
+            val rootWgEnabled by viewModel.rootWgEnabled.collectAsStateWithLifecycle()
+            val rootWgKillSwitch by viewModel.rootWgKillSwitch.collectAsStateWithLifecycle()
 
             RoutingModeBottomSheet(
                 currentMode = routingMode,
@@ -520,7 +522,11 @@ fun HomeScreen(
                     showRoutingModeSheet = false
                     onNavigateToFeature(HomeFeatureTipType.WIREGUARD)
                 },
-                onDismiss = { showRoutingModeSheet = false }
+                onDismiss = { showRoutingModeSheet = false },
+                rootWgEnabled = rootWgEnabled,
+                rootWgKillSwitch = rootWgKillSwitch,
+                onRootWgEnabledChange = viewModel::setRootWgEnabled,
+                onRootWgKillSwitchChange = viewModel::setRootWgKillSwitch,
             )
         }
 

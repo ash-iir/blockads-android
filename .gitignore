@@ -50,3 +50,4 @@ adguard
 android-re-workspace/
 app/src/main/jniLibs/*/libblockadsdns6.so
 
+app/src/main/jniLibs/*/libblockadswg.so

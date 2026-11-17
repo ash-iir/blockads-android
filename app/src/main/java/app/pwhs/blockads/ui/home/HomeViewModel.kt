@@ -84,6 +84,29 @@ class HomeViewModel(
             profiles.firstOrNull { it.id == activeId }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    val rootWgEnabled: StateFlow<Boolean> = appPrefs.wireguard.rootWireGuardEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val rootWgKillSwitch: StateFlow<Boolean> = appPrefs.wireguard.rootWireGuardKillSwitch
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    /** Root mode: tunnel apps through the active WireGuard profile (kernel WireGuard). */
+    fun setRootWgEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            appPrefs.wireguard.setRootWireGuardEnabled(enabled)
+            if (RootProxyService.isRunning) RootProxyService.requestRestart(context)
+        }
+    }
+
+    fun setRootWgKillSwitch(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            appPrefs.wireguard.setRootWireGuardKillSwitch(enabled)
+            if (RootProxyService.isRunning && appPrefs.wireguard.rootWireGuardEnabled.first()) {
+                RootProxyService.requestRestart(context)
+            }
+        }
+    }
+
     val activeSsProfile: StateFlow<ShadowsocksProfile?> = appPrefs.ssProfile
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 

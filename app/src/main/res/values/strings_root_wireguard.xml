@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Root mode: WireGuard through kernel WireGuard + uid routing, no VpnService -->
+    <string name="root_wg_title">WireGuard tunnel (root)</string>
+    <string name="root_wg_desc">Route apps through the active WireGuard profile without using the VPN slot. Ad blocking stays on.</string>
+    <string name="root_wg_profile">Profile: %1$s</string>
+    <string name="root_wg_no_profile">Add a WireGuard profile first</string>
+    <string name="root_wg_amnezia">AmneziaWG profiles are not supported in Root mode yet</string>
+    <string name="root_wg_kill_switch">Kill switch</string>
+    <string name="root_wg_kill_switch_desc">Block routed apps instead of bypassing a dead tunnel</string>
+</resources>

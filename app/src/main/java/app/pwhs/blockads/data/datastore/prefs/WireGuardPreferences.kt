@@ -23,6 +23,10 @@ class WireGuardPreferences(private val dataStore: DataStore<Preferences>) {
         val KEY_WG_ACTIVE_PROFILE_ID = stringPreferencesKey("wg_active_profile_id")
         val KEY_EXCLUDE_LAN = booleanPreferencesKey("exclude_lan")
         val KEY_ALLOW_APP_BYPASS = booleanPreferencesKey("allow_app_bypass")
+        // Root mode: route apps through the active WireGuard profile with kernel
+        // WireGuard + uid policy routing (no VpnService). See RootWireGuard.
+        val KEY_ROOT_WG_ENABLED = booleanPreferencesKey("root_wireguard_enabled")
+        val KEY_ROOT_WG_KILL_SWITCH = booleanPreferencesKey("root_wireguard_kill_switch")
 
         const val ROUTING_MODE_DIRECT = "direct"
         const val ROUTING_MODE_WIREGUARD = "wireguard"
@@ -34,6 +38,8 @@ class WireGuardPreferences(private val dataStore: DataStore<Preferences>) {
             prefs.remove(KEY_ROUTING_MODE)
             prefs.remove(KEY_EXCLUDE_LAN)
             prefs.remove(KEY_ALLOW_APP_BYPASS)
+            prefs.remove(KEY_ROOT_WG_ENABLED)
+            prefs.remove(KEY_ROOT_WG_KILL_SWITCH)
         }
     }
 
@@ -55,6 +61,22 @@ class WireGuardPreferences(private val dataStore: DataStore<Preferences>) {
 
     val allowAppBypass: Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[KEY_ALLOW_APP_BYPASS] ?: false
+    }
+
+    val rootWireGuardEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_ROOT_WG_ENABLED] ?: false
+    }
+
+    val rootWireGuardKillSwitch: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_ROOT_WG_KILL_SWITCH] ?: false
+    }
+
+    suspend fun setRootWireGuardEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[KEY_ROOT_WG_ENABLED] = enabled }
+    }
+
+    suspend fun setRootWireGuardKillSwitch(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[KEY_ROOT_WG_KILL_SWITCH] = enabled }
     }
 
     private fun readProfilesFromPrefs(prefs: Preferences): List<WireGuardProfile> {

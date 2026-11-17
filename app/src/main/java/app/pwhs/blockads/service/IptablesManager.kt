@@ -300,7 +300,7 @@ object IptablesManager {
         "ip6tables -t filter -X $CHAIN_DNS6_GUARD 2>/dev/null",
         // Restore Android Private DNS to automatic mode
         "settings put global private_dns_mode opportunistic",
-    ) + Ipv6DnsRedirect.teardownCommands()
+    ) + RootWireGuard.teardownCommands() + Ipv6DnsRedirect.teardownCommands()
 
     /**
      * True when the kernel accepted the IPv6 nat REDIRECT for port 53, i.e. IPv6

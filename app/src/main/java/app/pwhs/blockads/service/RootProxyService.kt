@@ -19,6 +19,7 @@ import app.pwhs.blockads.data.repository.FilterListRepository
 import app.pwhs.blockads.data.dao.DnsLogDao
 import app.pwhs.blockads.data.dao.FirewallRuleDao
 import app.pwhs.blockads.utils.AppNameResolver
+import app.pwhs.blockads.utils.configIssue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -145,6 +146,16 @@ class RootProxyService : Service() {
 
     @Volatile
     private var isRecordDnsLogsEnabled = true
+
+    // Root WireGuard (kernel WireGuard + uid routing, no VpnService) of this
+    // session; null when the feature is off or the profile is not usable.
+    @Volatile
+    private var rootWgSession: RootWireGuard.Session? = null
+
+    @Volatile
+    private var rootWgRetryAt: Long = 0L
+
+    private val rootWgBusy = java.util.concurrent.atomic.AtomicBoolean(false)
 
     override fun onCreate() {
         super.onCreate()
@@ -306,6 +317,11 @@ class RootProxyService : Service() {
                 ipv6NatRedirect = IptablesManager.hasIpv6DnsRedirect()
                 refreshIpv6DnsRedirect()
 
+                // Then the optional WireGuard tunnel (DNS paths above stay first:
+                // app DNS never uses the tunnel, only the engine's upstream does).
+                rootWgSession = prepareRootWireGuard()
+                rootWgRetryAt = 0L
+
                 // Start the background /proc/net/udp snapshotter. The
                 // engine's AppResolver reads from this snapshot instead
                 // of doing an inline shell call per DNS query — needed
@@ -327,6 +343,10 @@ class RootProxyService : Service() {
 
                 // 4. Start watchdog
                 startWatchdog()
+
+                // 5. Bring the tunnel up in the background: the first handshake
+                // can take seconds and must not hold the proxy in STARTING.
+                if (rootWgSession != null) serviceScope.launch { refreshRootWireGuard() }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to start Root Proxy mode")
                 IptablesManager.teardownRules()
@@ -342,7 +362,9 @@ class RootProxyService : Service() {
         stopNotificationUpdates()
         appNameResolver.stopSnapshotter()
 
-        // Teardown iptables rules (critical — prevents internet loss)
+        // Teardown iptables rules (critical — prevents internet loss).
+        // Also stops the Root WireGuard helper and removes its rules.
+        rootWgSession = null
         IptablesManager.teardownRules()
 
         // Stop Go engine
@@ -400,7 +422,8 @@ class RootProxyService : Service() {
             // Stop Go engine
             goTunnelAdapter.stop()
 
-            // Teardown iptables
+            // Teardown iptables (and the Root WireGuard tunnel)
+            rootWgSession = null
             IptablesManager.teardownRules()
 
             // Brief delay to let resources clean up
@@ -444,6 +467,7 @@ class RootProxyService : Service() {
                     ipv6NatRedirect = IptablesManager.hasIpv6DnsRedirect()
                 }
                 refreshIpv6DnsRedirect()
+                refreshRootWireGuard()
 
                 // Probe every 3rd tick (~30s) to keep it cheap.
                 if (tick % 3 == 0) {
@@ -486,6 +510,66 @@ class RootProxyService : Service() {
         }
     }
 
+    /**
+     * Builds the Root WireGuard session from the active WireGuard profile when
+     * the feature is on. Whitelisted apps stay outside the tunnel (same as VPN
+     * mode's disallowed apps); BlockAds itself is always inside.
+     * HTTPS filtering (MITM) stays on: its outbound connections are BlockAds'
+     * own and go through the tunnel.
+     */
+    private suspend fun prepareRootWireGuard(): RootWireGuard.Session? {
+        return try {
+            val wg = appPrefs.wireguard
+            if (!wg.rootWireGuardEnabled.first()) return null
+            val profile = wg.getActiveWgProfileSnapshot()
+            if (profile == null) {
+                Timber.w("Root WireGuard enabled but no WireGuard profile — tunnel off")
+                return null
+            }
+            profile.configIssue?.let {
+                Timber.w("Root WireGuard: profile '${profile.name}' has an issue: $it — tunnel off")
+                return null
+            }
+            RootWireGuard.prepare(
+                context = this,
+                profileName = profile.name,
+                config = profile.config,
+                excludedAppIds = whitelistedUids.map { it % 100_000 },
+                excludeLan = wg.excludeLan.first(),
+                killSwitch = wg.rootWireGuardKillSwitch.first(),
+            )
+        } catch (e: Exception) {
+            Timber.w(e, "Root WireGuard: could not prepare session")
+            null
+        }
+    }
+
+    /**
+     * Keeps the Root WireGuard tunnel up while the feature is on: helper,
+     * interface and rules always together (fail-open), with a back-off after a
+     * failed start (e.g. no handshake) so the watchdog does not hammer it.
+     */
+    private fun refreshRootWireGuard() {
+        val session = rootWgSession ?: return
+        if (System.currentTimeMillis() < rootWgRetryAt) return
+        if (!rootWgBusy.compareAndSet(false, true)) return
+        try {
+            val up = RootWireGuard.ensure(this, session)
+            if (rootWgSession !== session) {
+                // Stopped/restarted while the helper was starting: do not leave it behind.
+                RootWireGuard.stop()
+            } else if (!up) {
+                rootWgRetryAt = System.currentTimeMillis() + RootWireGuard.RETRY_BACKOFF_MS
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to refresh Root WireGuard")
+            runCatching { RootWireGuard.stop() }
+            rootWgRetryAt = System.currentTimeMillis() + RootWireGuard.RETRY_BACKOFF_MS
+        } finally {
+            rootWgBusy.set(false)
+        }
+    }
+
     override fun onDestroy() {
         Timber.d("RootProxyService onDestroy — teardown iptables")
         _state.value = VpnState.STOPPED
@@ -493,6 +577,7 @@ class RootProxyService : Service() {
         watchdogJob?.cancel()
         stopNotificationUpdates()
         if (::appNameResolver.isInitialized) appNameResolver.stopSnapshotter()
+        rootWgSession = null
         IptablesManager.teardownRules()
         activeTunnelAdapter = null
         serviceScope.cancel()
