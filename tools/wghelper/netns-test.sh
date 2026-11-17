@@ -61,7 +61,7 @@ r=$(get route get 8.8.8.8 uid 10001);                      echo "uid 10001 8.8.8
 r=$(get route get 192.168.1.5 uid 10000);                  echo "uid 10000 192.168.1.5      -> $r"; echo "$r" | grep -q 'dev wan0' || fail "lan excluded"
 r=$(get route get 10.66.66.7 uid 10000);                   echo "uid 10000 10.66.66.7       -> $r"; echo "$r" | grep -q 'dev bawg0' || fail "tunnel subnet"
 r=$(get route get 1.1.1.1 mark 0x40000000);                echo "probe mark 1.1.1.1         -> $r"; echo "$r" | grep -q 'dev bawg0' || fail "probe rule"
-r=$(get -6 route get 2001:4860::8888 uid 10000);           echo "uid 10000 v6               -> $r"; echo "$r" | grep -qi 'unreachable\|Network is unreachable' || fail "v6 must be blocked"
+r=$(get -6 route get 2001:4860::8888 uid 10000);           echo "uid 10000 v6               -> $r"; echo "$r" | grep -qi 'unreachable\|No route to host' || fail "v6 must be blocked"
 r=$(get -6 route get 2001:4860::8888 uid 10000 ipproto udp dport 53); echo "uid 10000 v6 udp/53         -> $r"
 echo "$r" | grep -q 'dev wan0' || fail "v6 dns must bypass"
 
